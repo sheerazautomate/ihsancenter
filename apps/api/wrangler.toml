@@ -1,0 +1,13 @@
+name = "ihsancenter-api"
+main = "src/index.ts"
+compatibility_date = "2024-12-18"
+compatibility_flags = ["nodejs_compat"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "ihsancenter"
+database_id = "local-dev-placeholder"
+migrations_dir = "migrations"
+
+[vars]
+ENVIRONMENT = "development"

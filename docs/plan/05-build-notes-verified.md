@@ -479,3 +479,47 @@ export named 'default'`. That is not a test failure: a stray `npm install` had h
 `workerd@1.20250718.0` over the version the pool pins. `npm ci` from the committed
 lockfile restored it. When that error appears, reinstall from the lock before touching
 any test or config.
+
+## Payables: the other half of the money loop was missing
+
+Udhaar (customers) had a complete screen: aging, a receipt form, allocation against
+oldest invoices. The supplier side had nothing. `POST /api/purchases/payments` worked
+and was ledger-tested, but no screen called it, so the only way to pay a company was
+the "paid cash" box at the moment a purchase was booked.
+
+The consequence was not cosmetic. Every credit purchase stayed open forever: the
+payables report drifted from the real ledger, and no company could ever satisfy its
+delete check, because its payable never reached zero.
+
+`Purchases.tsx` held the evidence that this was known and abandoned --
+`const [supplierPayments, setSupplierPayments] = useState(false)` and a
+`{supplierPayments && null}` line that could never render anything. Both are gone.
+
+**Payables** (`/payables`, next to Udhaar) is the mirror of the Udhaar screen:
+
+- the companies with a payable, from `/reports/payables` -- which reads the supplier
+  ledger, never purchases minus payments
+- tap one: amount (pre-filled with the balance), cash/bank/cheque, account, date,
+  reference
+- below it, the unpaid bills that make up the figure, and every payment made so far
+
+Balances are not allocated per bill the way invoices are per receipt. There is no
+supplier allocation table, and inventing FIFO allocation would have implied a
+precision the shop does not ask for: a supplier is paid, and the balance drops.
+
+### Two guards, one of them found only by running it
+
+Paying more than the balance is now refused, naming the actual figure ("The payable
+is Rs 2,500.00; Rs 3,000.00 is more than that"). Without it the supplier ledger flips
+negative and the shop appears to be holding the company's money with nothing
+explaining why. Paying a company that is owed nothing is refused too -- that is an
+expense, not a payable.
+
+The second was a **500 on a retried payment**. The unit test asserted the balance was
+right after a duplicate POST, which it was: the unique index blocked the second
+insert. But the request returned 500 with "Something went wrong", so a manager whose
+phone dropped the response would think the payment failed and try again. Purchases
+already handled this (`replayed: true`, HTTP 200); supplier payments did not. Now they
+do, and the test asserts the status code, not just the arithmetic -- the failure only
+appeared against a real server, which is the argument for driving these screens live
+rather than trusting a green suite.

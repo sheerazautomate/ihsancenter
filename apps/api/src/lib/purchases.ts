@@ -10,7 +10,7 @@
  * a shop actually means by "this load cost me Rs X landed".
  */
 
-import { lineTotalPaisa, MILLI, weightedAvgCostPaisa } from './money';
+import { formatPkr, lineTotalPaisa, MILLI, weightedAvgCostPaisa } from './money';
 import { newId } from './ids';
 import { buildLedgerRows, ledgerInsertStatements, type LedgerLine } from './ledger';
 import { isGuardFailure } from './guard';
@@ -505,9 +505,40 @@ export async function postSupplierPayment(
     userId?: string;
     idempotencyKey?: string;
   },
-): Promise<{ ok: true; paymentNo: string } | { ok: false; error: string }> {
+): Promise<
+  { ok: true; paymentNo: string; replayed: boolean } | { ok: false; error: string }
+> {
   if (!Number.isInteger(input.amountPaisa) || input.amountPaisa <= 0) {
     return { ok: false, error: 'Payment must be greater than zero' };
+  }
+
+  // How much is actually owed right now, from the supplier ledger -- the same
+  // source /reports/payables uses. Paying more than this would flip the balance
+  // the other way, so the shop would appear to be holding the company's money
+  // with no record of why. Refuse it and say the number, because "overpayment
+  // not allowed" without the figure leaves the manager guessing at the rate.
+  const balanceRow = await db
+    .prepare(
+      `SELECT COALESCE(SUM(credit_paisa - debit_paisa), 0) AS balancePaisa
+       FROM ledger_entries WHERE account_type = 'supplier' AND account_id = ?`,
+    )
+    .bind(input.companyId)
+    .first<{ balancePaisa: number }>();
+  const owedPaisa = balanceRow?.balancePaisa ?? 0;
+
+  if (owedPaisa <= 0) {
+    return {
+      ok: false,
+      error:
+        'Nothing is owed to this company, so there is no payable to settle. ' +
+        'Record it as an expense or a purchase instead.',
+    };
+  }
+  if (input.amountPaisa > owedPaisa) {
+    return {
+      ok: false,
+      error: `The payable is ${formatPkr(owedPaisa)}; ${formatPkr(input.amountPaisa)} is more than that. Pay the balance, or record the difference separately.`,
+    };
   }
 
   const now = new Date().toISOString();
@@ -536,35 +567,50 @@ export async function postSupplierPayment(
     now,
   });
 
-  await db.batch([
-    db
-      .prepare(
-        `INSERT INTO supplier_payments
-           (id, payment_no, doc_date, company_id, amount_paisa, mode, cash_account_id,
-            reference, notes, created_at, idempotency_key)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .bind(
-        paymentId,
-        paymentNo,
-        input.docDate,
-        input.companyId,
-        input.amountPaisa,
-        input.mode,
-        input.cashAccountId,
-        input.reference ?? null,
-        input.notes ?? null,
-        now,
-        normaliseIdempotencyKey(input.idempotencyKey),
-      ),
-    ...ledgerInsertStatements(db, ledgerRows),
-    db
-      .prepare(
-        `INSERT INTO audit_log (id, at, user_id, action, entity_type, entity_id, detail_json)
-         VALUES (?, ?, ?, 'create', 'supplier_payment', ?, ?)`,
-      )
-      .bind(newId('al'), now, input.userId ?? null, paymentId, JSON.stringify({ paymentNo })),
-  ]);
+  try {
+    await db.batch([
+      db
+        .prepare(
+          `INSERT INTO supplier_payments
+             (id, payment_no, doc_date, company_id, amount_paisa, mode, cash_account_id,
+              reference, notes, created_at, idempotency_key)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .bind(
+          paymentId,
+          paymentNo,
+          input.docDate,
+          input.companyId,
+          input.amountPaisa,
+          input.mode,
+          input.cashAccountId,
+          input.reference ?? null,
+          input.notes ?? null,
+          now,
+          normaliseIdempotencyKey(input.idempotencyKey),
+        ),
+      ...ledgerInsertStatements(db, ledgerRows),
+      db
+        .prepare(
+          `INSERT INTO audit_log (id, at, user_id, action, entity_type, entity_id, detail_json)
+           VALUES (?, ?, ?, 'create', 'supplier_payment', ?, ?)`,
+        )
+        .bind(newId('al'), now, input.userId ?? null, paymentId, JSON.stringify({ paymentNo })),
+    ]);
+  } catch (err) {
+    // A retry with the same key hit the unique index. The first payment is
+    // already on the books, so this is a success, not a failure -- purchases
+    // behave the same way. Without this the manager who tapped twice -- or whose
+    // phone dropped the response -- sees a red 500 after the money was recorded.
+    if (input.idempotencyKey && isIdempotencyCollision(err, 'uq_suppay_idem')) {
+      const existing = await db
+        .prepare(`SELECT payment_no FROM supplier_payments WHERE idempotency_key = ?`)
+        .bind(normaliseIdempotencyKey(input.idempotencyKey))
+        .first<{ payment_no: string }>();
+      if (existing) return { ok: true, paymentNo: existing.payment_no, replayed: true };
+    }
+    throw err;
+  }
 
-  return { ok: true, paymentNo };
+  return { ok: true, paymentNo, replayed: false };
 }

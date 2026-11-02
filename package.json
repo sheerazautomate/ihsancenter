@@ -9,12 +9,15 @@
   "scripts": {
     "dev:api": "npm run dev --workspace @ihsan/api",
     "dev:web": "npm run dev --workspace @ihsan/web",
-    "test": "npm run test --workspace @ihsan/api",
     "db:migrate:local": "npm run db:migrate:local --workspace @ihsan/api",
+    "db:seed:local": "npm run db:seed:local --workspace @ihsan/api",
     "db:reset:local": "npm run db:reset:local --workspace @ihsan/api",
+    "dev": "npm run db:reset:local && concurrently -n api,web -c green,cyan \"npm:dev:api\" \"npm:dev:web\"",
+    "test": "npm run test --workspace @ihsan/api",
     "typecheck": "npm run typecheck --workspaces --if-present"
   },
   "devDependencies": {
-    "@cloudflare/vitest-pool-workers": "^0.5.41"
+    "@cloudflare/vitest-pool-workers": "^0.5.41",
+    "concurrently": "^10.0.6"
   }
 }

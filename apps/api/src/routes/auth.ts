@@ -28,9 +28,14 @@ authRoutes.post('/login', async (c) => {
   const result = await login(c.env, { ...parsed.data, ip });
   if (!result.ok) return c.json({ error: result.error }, 401);
 
+  // `Secure` cookies are dropped by browsers over plain http, which would make
+  // login silently fail on a local dev server. Send it whenever the connection is
+  // actually https (always true in production).
+  const isHttps = new URL(c.req.url).protocol === 'https:';
+
   setCookie(c, SESSION_COOKIE, result.token, {
     httpOnly: true,
-    secure: true,
+    secure: isHttps,
     sameSite: 'Lax',
     path: '/',
     maxAge: SESSION_DAYS * 86_400,

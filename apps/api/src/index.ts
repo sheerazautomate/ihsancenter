@@ -2,6 +2,8 @@ import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { authRoutes } from './routes/auth';
 import { salesRoutes } from './routes/sales';
+import { catalogRoutes } from './routes/catalog';
+import { customerRoutes } from './routes/customers';
 import type { AppEnv } from './middleware';
 
 const app = new Hono<AppEnv>();
@@ -35,6 +37,8 @@ app.get('/health', (c) => c.json({ ok: true, service: 'ihsancenter-api' }));
 
 app.route('/api/auth', authRoutes);
 app.route('/api/sales', salesRoutes);
+app.route('/api/catalog', catalogRoutes);
+app.route('/api/customers', customerRoutes);
 
 app.notFound((c) => c.json({ error: 'Not found' }, 404));
 

@@ -79,6 +79,7 @@ function Shell({ user }: { user: CurrentUser }) {
             ['/invoices', 'Invoices', false],
             ['/purchases', 'Purchases', false],
             ['/receivables', 'Udhaar', false],
+            ['/customers', 'Customers', false],
             ['/stock', 'Stock', false],
             ['/expenses', 'Expenses', false],
             ['/reports', 'Reports', false],

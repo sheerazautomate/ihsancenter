@@ -34,6 +34,9 @@ const createSchema = z.object({
   name: z.string().min(1).max(120),
   phone: z.string().max(30).optional(),
   village: z.string().max(80).optional(),
+  // Kept in step with the customers.type CHECK constraint in 0001_init.sql.
+  // 'walkin' is the anonymous counter customer and is never set from a form, but
+  // it must stay accepted because the billing screen may reference it.
   type: z.enum(['farmer', 'dealer', 'walkin']).optional(),
   creditLimit: z.number().min(0).max(100_000_000).optional(),
 });

@@ -387,3 +387,44 @@ Fixed in two places, because the two moments are different:
 Two deliberate frictions: a sale rate is **required** (a product with no price cannot
 be billed, and the failure would surface at the counter), and selling below cost asks
 for confirmation rather than blocking — a clearance line is legitimate, a typo is not.
+
+---
+
+## Two screens that existed and could not be reached
+
+The manager asked for "a customers tab". There was already a full Customers page —
+search, list with outstanding balances, per-customer ledger — **and no link to it in
+the navigation**. The route was registered, so typing `/customers` worked; nothing
+suggested it existed. Same shape as the missing product form: the code was fine, the
+path to it was not.
+
+Also added:
+
+- **Product editing.** There was no `PATCH /catalog/products/:id` at all — a typo in a
+  sale rate meant a new product and an orphaned old one.
+- **Customer editing.** `PATCH /api/customers/:id` existed and was unused. Phone,
+  village, credit limit and the credit hold are now editable, and customers can be
+  created from the tab rather than only from the billing screen.
+
+### What is deliberately *not* editable, and why
+
+Both edit forms refuse fields that would quietly corrupt the books:
+
+| Field | Why it is locked |
+|---|---|
+| `qty_on_hand` | Stock moves through purchases, sales and returns. An editable count is how a system ends up with a shelf that disagrees with its ledger. |
+| product `company_id` | It decides which payable a purchase hits and how company totals report. Moving it restates history. |
+| `avg_cost_paisa` | Derived from purchases, not typed. |
+
+A rate change is **forward-only**: invoice lines store their own rate, so raising a
+product's price never rewrites a bill already given to a farmer. The endpoint returns
+how many past lines now sit beside the new rate, and the UI says so in words —
+otherwise a manager assumes the change applied retroactively and the reports look
+wrong to them later. Verified directly: sold a line at Rs 20, raised the product rate
+to Rs 30, and the invoice still read Rs 40 while the books stayed balanced.
+
+**The `contractor` customer type was nearly shipped.** The form offered it, the
+schema's CHECK constraint did not allow it (`farmer`, `dealer`, `walkin` only), so
+every save would have failed at the database. Caught by reading the constraint instead
+of trusting the form. The type list in the UI now mirrors the constraint, with a
+comment saying so, because the next person to add an option will hit the same wall.

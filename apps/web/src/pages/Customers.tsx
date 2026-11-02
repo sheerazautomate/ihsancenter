@@ -1,7 +1,7 @@
-import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useEffect, useState } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, type Customer } from '../lib/api';
-import { formatPkr } from '../lib/money';
+import { formatPkr, paisaToInput, parseNumber } from '../lib/money';
 
 interface LedgerEntry {
   entry_date: string;
@@ -12,9 +12,45 @@ interface LedgerEntry {
   running_paisa: number;
 }
 
+/** Blank form state, so "new" and "edit" share one shape. */
+interface FormState {
+  id: string | null;
+  name: string;
+  phone: string;
+  village: string;
+  type: string;
+  creditLimit: string;
+  isCreditHold: boolean;
+}
+
+const EMPTY: FormState = {
+  id: null,
+  name: '',
+  phone: '',
+  village: '',
+  type: 'farmer',
+  creditLimit: '',
+  isCreditHold: false,
+};
+
+/**
+ * Must match the customers.type CHECK constraint in the schema -- the database
+ * rejects anything else, so adding an option here without a migration would fail
+ * at save time rather than at review time.
+ */
+const TYPES = [
+  { value: 'farmer', label: 'Farmer' },
+  { value: 'dealer', label: 'Dealer' },
+];
+
 export default function CustomersPage() {
+  const queryClient = useQueryClient();
   const [q, setQ] = useState('');
   const [selected, setSelected] = useState<Customer | null>(null);
+  const [form, setForm] = useState<FormState | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
 
   const { data } = useQuery({
     queryKey: ['customers', 'list', q],
@@ -27,22 +63,192 @@ export default function CustomersPage() {
     enabled: !!selected,
   });
 
+  // Keep the detail pane in step with a save, so the header shows the new name
+  // without needing the user to reselect the row.
+  useEffect(() => {
+    if (!selected) return;
+    const fresh = data?.customers.find((c) => c.id === selected.id);
+    if (fresh && (fresh.name !== selected.name || fresh.phone !== selected.phone)) setSelected(fresh);
+  }, [data, selected]);
+
+  function startEdit(c: Customer) {
+    setError(null);
+    setNotice(null);
+    setForm({
+      id: c.id,
+      name: c.name,
+      phone: c.phone ?? '',
+      village: c.village ?? '',
+      type: c.type ?? 'farmer',
+      creditLimit: c.credit_limit_paisa ? paisaToInput(c.credit_limit_paisa) : '',
+      isCreditHold: c.is_credit_hold === 1,
+    });
+  }
+
+  async function save() {
+    if (!form) return;
+    setError(null);
+    setNotice(null);
+
+    if (!form.name.trim()) return setError('Enter the customer name');
+
+    setBusy(true);
+    try {
+      if (form.id) {
+        await api(`/customers/${form.id}`, {
+          method: 'PATCH',
+          body: JSON.stringify({
+            name: form.name.trim(),
+            phone: form.phone.trim() || null,
+            village: form.village.trim() || null,
+            creditLimit: parseNumber(form.creditLimit),
+            isCreditHold: form.isCreditHold,
+          }),
+        });
+        setNotice(`${form.name.trim()} updated`);
+      } else {
+        await api('/customers', {
+          method: 'POST',
+          body: JSON.stringify({
+            name: form.name.trim(),
+            phone: form.phone.trim() || undefined,
+            village: form.village.trim() || undefined,
+            type: form.type,
+            creditLimit: parseNumber(form.creditLimit),
+          }),
+        });
+        setNotice(`${form.name.trim()} added`);
+      }
+      setForm(null);
+      await queryClient.invalidateQueries({ queryKey: ['customers'] });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not save the customer');
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <div className="billing" style={{ gridTemplateColumns: selected ? '1fr 1.2fr' : '1fr' }}>
       <div>
         <div className="card">
-          <h2>Customers</h2>
+          <div className="row wrap">
+            <h2 style={{ margin: 0 }}>Customers</h2>
+            <div className="grow" />
+            <button
+              className="btn"
+              onClick={() => {
+                setError(null);
+                setNotice(null);
+                setForm({ ...EMPTY });
+              }}
+            >
+              + New customer
+            </button>
+          </div>
           <input
             className="input"
+            style={{ marginTop: 12 }}
             placeholder="Search by name, phone or village…"
             value={q}
             onChange={(e) => setQ(e.target.value)}
           />
+          {notice && <div className="alert success" style={{ marginTop: 12 }}>{notice}</div>}
         </div>
+
+        {form && (
+          <div className="card">
+            <h2>{form.id ? 'Edit customer' : 'New customer'}</h2>
+            <div className="form-grid">
+              <div className="span-2">
+                <label className="muted" style={{ fontSize: 12 }}>Name</label>
+                <input
+                  className="input"
+                  value={form.name}
+                  onChange={(e) => setForm({ ...form, name: e.target.value })}
+                  placeholder="e.g. Ali Muhammad"
+                  autoFocus
+                />
+              </div>
+              <div>
+                <label className="muted" style={{ fontSize: 12 }}>Phone</label>
+                <input
+                  className="input"
+                  value={form.phone}
+                  onChange={(e) => setForm({ ...form, phone: e.target.value })}
+                  placeholder="03xx…"
+                  inputMode="tel"
+                />
+              </div>
+              <div>
+                <label className="muted" style={{ fontSize: 12 }}>Village / area</label>
+                <input
+                  className="input"
+                  value={form.village}
+                  onChange={(e) => setForm({ ...form, village: e.target.value })}
+                />
+              </div>
+              {!form.id && (
+                <div>
+                  <label className="muted" style={{ fontSize: 12 }}>Type</label>
+                  <select
+                    className="select"
+                    value={form.type}
+                    onChange={(e) => setForm({ ...form, type: e.target.value })}
+                  >
+                    {TYPES.map((t) => (
+                      <option key={t.value} value={t.value}>{t.label}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+              <div>
+                <label className="muted" style={{ fontSize: 12 }}>Credit limit (Rs)</label>
+                <input
+                  className="input"
+                  inputMode="decimal"
+                  value={form.creditLimit}
+                  onChange={(e) => setForm({ ...form, creditLimit: e.target.value })}
+                  placeholder="blank = no limit"
+                />
+              </div>
+              {form.id && (
+                <div className="span-2">
+                  <label className="row" style={{ gap: 8 }}>
+                    <input
+                      type="checkbox"
+                      checked={form.isCreditHold}
+                      onChange={(e) => setForm({ ...form, isCreditHold: e.target.checked })}
+                    />
+                    <span>
+                      Stop new credit (udhaar)
+                      <span className="muted" style={{ display: 'block', fontSize: 12 }}>
+                        Cash sales still go through. Use this when a customer is not paying.
+                      </span>
+                    </span>
+                  </label>
+                </div>
+              )}
+            </div>
+
+            {error && <div className="alert error" style={{ marginTop: 12 }}>{error}</div>}
+
+            <div className="row" style={{ marginTop: 12 }}>
+              <button className="btn" onClick={save} disabled={busy}>
+                {busy ? 'Saving…' : form.id ? 'Save changes' : 'Add customer'}
+              </button>
+              <button className="btn secondary" onClick={() => setForm(null)} disabled={busy}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
 
         <div className="card">
           {(data?.customers ?? []).length === 0 ? (
-            <p className="muted">No customers found.</p>
+            <p className="muted">
+              {q ? 'No customers match that search.' : 'No customers yet. Use + New customer above.'}
+            </p>
           ) : (
             <table>
               <thead>
@@ -50,6 +256,7 @@ export default function CustomersPage() {
                   <th>Customer</th>
                   <th className="num">Outstanding</th>
                   <th className="num">Limit</th>
+                  <th />
                 </tr>
               </thead>
               <tbody>
@@ -72,6 +279,19 @@ export default function CustomersPage() {
                     <td className="num mono muted">
                       {c.credit_limit_paisa > 0 ? formatPkr(c.credit_limit_paisa, { decimals: false }) : 'None'}
                     </td>
+                    <td className="num">
+                      <button
+                        className="btn secondary sm"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setSelected(c);
+                          startEdit(c);
+                        }}
+                        aria-label={`Edit ${c.name}`}
+                      >
+                        Edit
+                      </button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -86,12 +306,41 @@ export default function CustomersPage() {
             <div className="row">
               <div className="grow">
                 <h2 style={{ marginBottom: 2 }}>{selected.name}</h2>
-                <div className="muted">{[selected.phone, selected.village].filter(Boolean).join(' · ')}</div>
+                <div className="muted">
+                  {[selected.phone, selected.village].filter(Boolean).join(' · ') || 'No phone or village recorded'}
+                </div>
               </div>
+              <button className="btn secondary sm" onClick={() => startEdit(selected)}>
+                Edit
+              </button>
               <button className="btn secondary sm" onClick={() => setSelected(null)}>
                 Close
               </button>
             </div>
+            <table style={{ marginTop: 12 }}>
+              <tbody>
+                <tr>
+                  <td className="muted">Outstanding</td>
+                  <td className="num mono">{formatPkr(selected.outstanding_paisa)}</td>
+                </tr>
+                <tr>
+                  <td className="muted">Credit limit</td>
+                  <td className="num mono">
+                    {selected.credit_limit_paisa > 0 ? formatPkr(selected.credit_limit_paisa) : 'No limit'}
+                  </td>
+                </tr>
+                <tr>
+                  <td className="muted">Credit</td>
+                  <td className="num">
+                    {selected.is_credit_hold === 1 ? (
+                      <span className="badge void">on hold</span>
+                    ) : (
+                      <span className="muted">allowed</span>
+                    )}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
           </div>
 
           <div className="card">

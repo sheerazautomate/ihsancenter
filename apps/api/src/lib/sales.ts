@@ -26,6 +26,7 @@ import {
   withGuards,
 } from './guard';
 import { allocateDocNo } from './numbering';
+import { isIdempotencyCollision, normaliseIdempotencyKey } from './idempotency';
 
 export interface SaleLineInput {
   productId: string;
@@ -49,6 +50,11 @@ export interface SaleInput {
   overrideReason?: string;
   allowNegativeStock?: boolean;
   userId?: string;
+  /**
+   * Client-generated key making this post idempotent. A retry with the same key
+   * returns the original invoice instead of creating a second one.
+   */
+  idempotencyKey?: string;
 }
 
 export interface PostedSale {
@@ -60,7 +66,7 @@ export interface PostedSale {
 }
 
 export type PostSaleResult =
-  | { ok: true; sale: PostedSale }
+  | { ok: true; sale: PostedSale; replayed?: boolean }
   | { ok: false; error: string; code?: string };
 
 interface ProductRow {
@@ -73,6 +79,13 @@ interface ProductRow {
 }
 
 export async function postSale(db: D1Database, input: SaleInput): Promise<PostSaleResult> {
+  // ---------- 0. idempotency: has this exact request already been posted? ----------
+  const idempotencyKey = normaliseIdempotencyKey(input.idempotencyKey);
+  if (idempotencyKey) {
+    const existing = await findPostedSale(db, idempotencyKey);
+    if (existing) return { ok: true, sale: existing, replayed: true };
+  }
+
   // ---------- 1. validate input ----------
   if (!input.lines || input.lines.length === 0) {
     return { ok: false, error: 'A sale needs at least one line' };
@@ -185,8 +198,9 @@ export async function postSale(db: D1Database, input: SaleInput): Promise<PostSa
         `INSERT INTO sales_invoices
            (id, invoice_no, doc_date, customer_id, subtotal_paisa, discount_paisa,
             total_paisa, paid_cash_paisa, paid_bank_paisa, credit_paisa,
-            cost_total_paisa, cash_account_id, bank_account_id, notes, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            cost_total_paisa, cash_account_id, bank_account_id, notes, created_at,
+            idempotency_key)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .bind(
         invoiceId,
@@ -204,6 +218,7 @@ export async function postSale(db: D1Database, input: SaleInput): Promise<PostSa
         input.bankAccountId ?? null,
         input.notes ?? null,
         now,
+        idempotencyKey,
       ),
   );
 
@@ -379,6 +394,13 @@ export async function postSale(db: D1Database, input: SaleInput): Promise<PostSa
   try {
     await db.batch(guarded);
   } catch (err) {
+    // A concurrent request with the same key won the race. Return ITS invoice --
+    // the caller gets one bill, not an error.
+    if (idempotencyKey && isIdempotencyCollision(err, 'uq_invoice_idem')) {
+      const existing = await findPostedSale(db, idempotencyKey);
+      if (existing) return { ok: true, sale: existing, replayed: true };
+    }
+
     // The batch rolled back, so the database is untouched: re-reading it now tells
     // us truthfully which invariant blocked the sale.
     if (isGuardFailure(err)) {
@@ -403,6 +425,32 @@ export async function postSale(db: D1Database, input: SaleInput): Promise<PostSa
       creditPaisa: credit,
       costTotalPaisa: costTotal,
     },
+  };
+}
+
+/** Look up a sale already posted under an idempotency key. */
+async function findPostedSale(db: D1Database, key: string): Promise<PostedSale | null> {
+  const row = await db
+    .prepare(
+      `SELECT id, invoice_no, total_paisa, credit_paisa, cost_total_paisa
+       FROM sales_invoices WHERE idempotency_key = ?`,
+    )
+    .bind(key)
+    .first<{
+      id: string;
+      invoice_no: string;
+      total_paisa: number;
+      credit_paisa: number;
+      cost_total_paisa: number;
+    }>();
+
+  if (!row) return null;
+  return {
+    id: row.id,
+    invoiceNo: row.invoice_no,
+    totalPaisa: row.total_paisa,
+    creditPaisa: row.credit_paisa,
+    costTotalPaisa: row.cost_total_paisa,
   };
 }
 

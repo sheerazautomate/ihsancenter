@@ -83,17 +83,48 @@ Never let the database decide what "today" is.
 |---|---|
 | `PRAGMA foreign_keys` off | On by default in D1 |
 | Integer division rounding on `(qty × rate) / 1000` | Half-up integer maths, no floats anywhere. Tested at 2.5 kg × Rs 400 and 3 × Rs 33.33 |
-| PBKDF2 vs the 10 ms CPU budget | **Still unverified** — login isn't built yet. First thing to measure when it is |
+| PBKDF2 vs the 10 ms CPU budget | **Measured, and it changed the design** — see below |
+
+---
+
+## Changed the design #3 — 100k PBKDF2 iterations do not fit in 10 ms
+
+The plan assumed 100,000 PBKDF2 iterations (a common interactive-login default) and
+that it would probably fit. **Measured in workerd, the actual runtime:**
+
+| Iterations | Time per hash |
+|---|---|
+| 10,000 | 1.8 ms |
+| 25,000 | 4.4 ms |
+| 50,000 | 8.6 ms |
+| 100,000 | **16.9 ms** |
+
+100k alone exceeds the free plan's 10 ms CPU budget, before session signing and the
+D1 round trip. The default is now **25,000 iterations (~4.4 ms)**.
+
+That is a genuine weakening of password hashing, so it is compensated for by two
+other controls rather than left as a shrug: a fixed 700 ms delay on every failed
+login, and a 5-attempt / 15-minute lockout. For one internal account on a private
+URL that combination is defensible. Any future move to Workers Paid ($5/mo) should
+raise this back to 100k immediately — the iteration count is stored per user, so
+that is a code change with no migration.
+
+> Measurement note: `performance.now()` returns 0 for the crypto call inside
+> workerd's test runtime, so the first measurements looked like "0 ms at 100k
+> iterations". Timing a batch of 10 hashes with `Date.now()` gave the real figures.
+> Worth knowing before trusting any other microbenchmark in this environment.
 
 ---
 
 ## Still open
 
-1. **PBKDF2 iteration cost** on a free Worker (measure before choosing 100k).
-2. **The 10 ms CPU ceiling for reports.** Aggregation time inside D1 is not billed
+1. **The 10 ms CPU ceiling for reports.** Aggregation time inside D1 is not billed
    to the Worker, but large result serialisation is. Needs a real report to measure.
-3. **`db.batch()` size limits.** The 500-statement/1 MB guidance suggests chunking;
+2. **`db.batch()` size limits.** The 500-statement/1 MB guidance suggests chunking;
    a single sale is ~20 statements, so no issue yet, but year-end jobs will need it.
+3. **Cross-worker session verification** costs one D1 read per request. At 2,000
+   requests/day against a 5M row-read budget that is negligible, but it would be the
+   first thing to cache if request volume ever grew.
 
 ---
 
@@ -101,19 +132,31 @@ Never let the database decide what "today" is.
 
 ```
 apps/api/
-  migrations/0001_init.sql     schema, 20 tables, indexes
+  migrations/0001_init.sql     schema: 20 tables, indexes
   migrations/0002_seed.sql     4 companies, 2 cash accounts, expense categories
+  migrations/0003_auth...sql   login attempts, idempotency unique keys
   src/lib/money.ts             paisa/milli types, lakh-crore formatting, rounding
   src/lib/ids.ts               ULIDs generated in code (batch() can't return ids)
-  src/lib/guard.ts             atomic invariant guards + failure diagnosis
+  src/lib/guard.ts             atomic invariant guards + post-rollback diagnosis
   src/lib/numbering.ts         INV-2026-00042 sequences, Asia/Karachi business date
   src/lib/ledger.ts            double-entry builder, credit panel, aging SQL
-  src/lib/sales.ts             postSale / voidSale
-  test/sales.test.ts           18 tests against real D1
+  src/lib/sales.ts             postSale / voidSale, idempotent
+  src/lib/crypto.ts            PBKDF2 (measured), HMAC session tokens
+  src/lib/auth.ts              login, lockout, sessions, password change
+  src/lib/idempotency.ts       key normalisation, collision detection
+  src/middleware.ts            requireAuth / requireRole
+  src/routes/auth.ts           /api/auth/*
+  src/routes/sales.ts          /api/sales/*
+  src/index.ts                 Hono app, CORS, error handling
+  test/sales.test.ts           18 tests
+  test/auth-and-idempotency.test.ts  21 tests
 ```
+
+**39 tests, green under `--sequence.shuffle`.**
 
 ### The tested behaviours
 
+**Posting**
 - Split payment (cash + credit + bank) posts one balanced ledger
 - Credit limit blocks a sale **atomically** — no invoice, no stock movement, no ledger row
 - Manager override posts the sale and writes the reason to `audit_log`
@@ -123,15 +166,28 @@ apps/api/
 - Credit panel reports limit / outstanding / available / aging / would-exceed
 - Zero credit limit means "unlimited", not "no credit"
 
+**Idempotency**
+- Posting the same key twice returns the SAME invoice, one stock deduction
+- Two different keys create two invoices
+- No key at all still works (two invoices)
+- Malformed keys are rejected, not stored
+- Over HTTP: first request 201 `replayed: false`, the double-tap 200 `replayed: true`
+
+**Auth**
+- Correct password signs in; username is case-insensitive
+- Wrong password and unknown user return an identical message (no account enumeration)
+- 5 failed attempts locks out even a correct password
+- Changing the password invalidates every existing session immediately
+- Tampered and expired session tokens are rejected
+- Bootstrap works once, then returns 409 forever
+
 ---
 
 ## Deliberate omissions in this slice
 
-- **No HTTP layer yet.** `postSale` is a library function with tests; the Hono
-  routes, auth middleware and request validation come next, so the business rules
-  are proven before they are exposed.
-- **No idempotency key** on posting yet. Required before the UI ships: a double-tap
-  on "Save bill" must not create two invoices.
+- **Receipts, purchases, expenses have no routes yet.** Their tables and idempotency
+  keys exist; only sales are exposed, because sales is the money path.
+- **No UI.** Next slice is the billing screen.
 - **`qty_on_hand` concurrency.** The guarded `UPDATE` prevents negative stock, but
   two simultaneous sales of the last unit will race; one will be correctly rejected
   by the guard. Correct, but the loser sees an ugly error. Acceptable for one

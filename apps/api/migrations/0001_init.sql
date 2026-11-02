@@ -9,7 +9,7 @@ CREATE TABLE users (
   name          TEXT NOT NULL,
   username      TEXT NOT NULL UNIQUE,
   password_hash TEXT NOT NULL,
-  iterations    INTEGER NOT NULL DEFAULT 100000,
+  iterations    INTEGER NOT NULL DEFAULT 25000,
   token_version INTEGER NOT NULL DEFAULT 1,
   role          TEXT NOT NULL DEFAULT 'manager' CHECK (role IN ('manager','clerk','accountant')),
   is_active     INTEGER NOT NULL DEFAULT 1,

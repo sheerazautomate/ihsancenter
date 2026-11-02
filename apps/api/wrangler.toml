@@ -11,3 +11,8 @@ migrations_dir = "migrations"
 
 [vars]
 ENVIRONMENT = "development"
+ALLOWED_ORIGINS = "http://localhost:5173"
+
+# Secrets are never committed. Set them with:
+#   wrangler secret put SESSION_SECRET
+# For local development put them in apps/api/.dev.vars (git-ignored).

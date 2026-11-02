@@ -143,9 +143,11 @@ export default function OpeningPage() {
 
     setBusy(true);
     try {
+      // No Idempotency-Key here on purpose: each account may be opened exactly
+      // once, so a double-tap cannot post twice — the second attempt is refused
+      // by the same guard that protects the books.
       const result = await api<OpeningResult>('/opening', {
         method: 'POST',
-        headers: { 'Idempotency-Key': crypto.randomUUID() },
         body: JSON.stringify(pending.input),
       });
       setDone(result);

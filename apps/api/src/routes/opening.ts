@@ -39,6 +39,12 @@ const schema = z.object({
   notes: z.string().max(500).optional(),
 });
 
+/**
+ * No `Idempotency-Key` here, unlike every other posting route: an opening may be
+ * entered only once per account, so the duplicate-protection the key provides is
+ * already structural. A retried request is refused with `opening_already_posted`
+ * rather than replayed, which is the honest answer — the books were already told.
+ */
 openingRoutes.post('/', async (c) => {
   const parsed = schema.safeParse(await c.req.json().catch(() => null));
   if (!parsed.success) {

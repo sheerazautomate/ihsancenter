@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, type ProductCategory, type Company } from '../lib/api';
-import { formatPkr, formatQty, parseNumber } from '../lib/money';
+import { formatPkr, formatQty, paisaToInput, parseNumber } from '../lib/money';
 
 interface StockRow {
   id: string;
@@ -46,6 +46,21 @@ export default function StockPage() {
   const [saved, setSaved] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
+  // ---- edit an existing product ----
+  // Quantity is deliberately absent: stock moves through purchases, sales and
+  // returns, never a form, so the count and the ledger cannot drift apart.
+  const [editing, setEditing] = useState<StockRow | null>(null);
+  const [eName, setEName] = useState('');
+  const [eCategory, setECategory] = useState<ProductCategory>('insecticide');
+  const [eUnit, setEUnit] = useState('pcs');
+  const [ePackSize, setEPackSize] = useState('');
+  const [ePurchaseRate, setEPurchaseRate] = useState('');
+  const [eSaleRate, setESaleRate] = useState('');
+  const [eReorder, setEReorder] = useState('');
+  const [eError, setEError] = useState<string | null>(null);
+  const [eNotice, setENotice] = useState<string | null>(null);
+  const [eBusy, setEBusy] = useState(false);
+
   const { data, isLoading } = useQuery({
     queryKey: ['stock', lowOnly],
     queryFn: () => api<{ stock: StockRow[] }>(`/catalog/stock?low=${lowOnly ? 1 : 0}`),
@@ -66,6 +81,62 @@ export default function StockPage() {
     (sum, r) => sum + Math.round((r.qty_on_hand_milli * r.sale_rate_paisa) / 1000),
     0,
   );
+
+  function openEditor(r: StockRow) {
+    setEditing(r);
+    setEName(r.name);
+    setECategory((r.category as ProductCategory) ?? 'other');
+    setEUnit(r.unit || 'pcs');
+    setEPackSize(r.pack_size ?? '');
+    setEPurchaseRate(paisaToInput(r.purchase_rate_paisa));
+    setESaleRate(paisaToInput(r.sale_rate_paisa));
+    setEReorder(r.reorder_level_milli ? String(r.reorder_level_milli / 1000) : '');
+    setEError(null);
+    setENotice(null);
+  }
+
+  async function saveEdit() {
+    if (!editing) return;
+    setEError(null);
+    setENotice(null);
+
+    if (!eName.trim()) return setEError('Enter the product name');
+    const sell = parseNumber(eSaleRate);
+    if (sell <= 0) return setEError('Enter a sale rate — without it the product cannot be billed');
+
+    setEBusy(true);
+    try {
+      const res = await api<{ affected: { saleLines: number; purchaseLines: number } }>(
+        `/catalog/products/${editing.id}`,
+        {
+          method: 'PATCH',
+          body: JSON.stringify({
+            name: eName.trim(),
+            category: eCategory,
+            unit: eUnit.trim() || 'pcs',
+            packSize: ePackSize.trim() || null,
+            purchaseRate: parseNumber(ePurchaseRate),
+            saleRate: sell,
+            reorderLevel: parseNumber(eReorder),
+          }),
+        },
+      );
+      const past = res.affected.saleLines + res.affected.purchaseLines;
+      setENotice(
+        past > 0
+          ? `Saved. The new rates apply from now on — ${res.affected.saleLines} billed line(s) and ` +
+              `${res.affected.purchaseLines} purchase line(s) keep the rates they were entered at.`
+          : 'Saved.',
+      );
+      await queryClient.invalidateQueries({ queryKey: ['stock'] });
+      await queryClient.invalidateQueries({ queryKey: ['products'] });
+      setEditing(null);
+    } catch (e) {
+      setEError(e instanceof Error ? e.message : 'Could not save the product');
+    } finally {
+      setEBusy(false);
+    }
+  }
 
   function resetForm() {
     setName('');
@@ -287,6 +358,91 @@ export default function StockPage() {
         )}
       </div>
 
+      {editing && (
+        <div className="card">
+          <div className="row wrap">
+            <h2 style={{ margin: 0 }}>Edit {editing.name}</h2>
+            <div className="grow" />
+            <span className="muted" style={{ fontSize: 12 }}>
+              {formatQty(editing.qty_on_hand_milli)} in stock · {editing.company_name}
+            </span>
+          </div>
+
+          <div className="form-grid" style={{ marginTop: 14 }}>
+            <div className="span-2">
+              <label className="muted" style={{ fontSize: 12 }}>Product name</label>
+              <input className="input" value={eName} onChange={(e) => setEName(e.target.value)} />
+            </div>
+            <div>
+              <label className="muted" style={{ fontSize: 12 }}>Type</label>
+              <select
+                className="select"
+                value={eCategory}
+                onChange={(e) => setECategory(e.target.value as ProductCategory)}
+              >
+                {CATEGORIES.map((c) => (
+                  <option key={c.value} value={c.value}>{c.label}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="muted" style={{ fontSize: 12 }}>Pack size</label>
+              <input className="input" value={ePackSize} onChange={(e) => setEPackSize(e.target.value)} />
+            </div>
+            <div>
+              <label className="muted" style={{ fontSize: 12 }}>Unit</label>
+              <input className="input" value={eUnit} onChange={(e) => setEUnit(e.target.value)} />
+            </div>
+            <div>
+              <label className="muted" style={{ fontSize: 12 }}>Reorder at</label>
+              <input
+                className="input"
+                inputMode="decimal"
+                value={eReorder}
+                onChange={(e) => setEReorder(e.target.value)}
+                placeholder="optional"
+              />
+            </div>
+            <div>
+              <label className="muted" style={{ fontSize: 12 }}>Purchase rate (Rs)</label>
+              <input
+                className="input"
+                inputMode="decimal"
+                value={ePurchaseRate}
+                onChange={(e) => setEPurchaseRate(e.target.value)}
+              />
+            </div>
+            <div>
+              <label className="muted" style={{ fontSize: 12 }}>Sale rate (Rs)</label>
+              <input
+                className="input"
+                inputMode="decimal"
+                value={eSaleRate}
+                onChange={(e) => setESaleRate(e.target.value)}
+              />
+            </div>
+          </div>
+
+          <p className="muted" style={{ fontSize: 12, marginTop: 10 }}>
+            Quantity is not editable here — stock changes through purchases, sales and returns, so
+            the shelf count and the books cannot disagree. Company cannot be changed either: it
+            decides which payable a purchase hits.
+          </p>
+
+          {eError && <div className="alert error">{eError}</div>}
+          {eNotice && <div className="alert success">{eNotice}</div>}
+
+          <div className="row" style={{ marginTop: 10 }}>
+            <button className="btn" onClick={saveEdit} disabled={eBusy}>
+              {eBusy ? 'Saving…' : 'Save changes'}
+            </button>
+            <button className="btn secondary" onClick={() => setEditing(null)} disabled={eBusy}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
       <div className="card">
         {isLoading ? (
           <p className="muted">Loading…</p>
@@ -304,6 +460,7 @@ export default function StockPage() {
                 <th className="num">Reorder at</th>
                 <th className="num">Cost</th>
                 <th className="num">Sale</th>
+                <th />
               </tr>
             </thead>
             <tbody>
@@ -325,6 +482,15 @@ export default function StockPage() {
                     <td className="num mono muted">{formatQty(r.reorder_level_milli)}</td>
                     <td className="num mono">{formatPkr(r.purchase_rate_paisa)}</td>
                     <td className="num mono">{formatPkr(r.sale_rate_paisa)}</td>
+                    <td className="num">
+                      <button
+                        className="btn secondary sm"
+                        onClick={() => openEditor(r)}
+                        aria-label={`Edit ${r.name}`}
+                      >
+                        Edit
+                      </button>
+                    </td>
                   </tr>
                 );
               })}

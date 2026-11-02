@@ -95,6 +95,66 @@ describe('catalog', () => {
     expect(res.status).toBe(201);
   });
 
+  it('creates a product with no opening stock and records no movement', async () => {
+    // The Stock screen's form defaults opening quantity to 0 -- a shop adding a
+    // catalogue entry it has not bought yet should not get a phantom movement.
+    const res = await post('/api/catalog/products', {
+      name: 'Catalogue Only',
+      companyId: 'co_tahafuz',
+      category: 'other',
+      purchaseRate: 0,
+      saleRate: 130,
+    });
+    expect(res.status).toBe(201);
+    const { id } = await res.json<{ id: string }>();
+
+    const movements = await DB.prepare(
+      `SELECT COUNT(*) AS n FROM stock_movements WHERE product_id = ?`,
+    )
+      .bind(id)
+      .first<{ n: number }>();
+    expect(movements!.n).toBe(0);
+
+    const product = await DB.prepare(`SELECT qty_on_hand_milli AS q FROM products WHERE id = ?`)
+      .bind(id)
+      .first<{ q: number }>();
+    expect(product!.q).toBe(0);
+  });
+
+  it('requires a sale rate, so a product cannot be created unbillable', async () => {
+    const res = await post('/api/catalog/products', {
+      name: 'No Price',
+      companyId: 'co_engro',
+      category: 'other',
+      purchaseRate: 100,
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it('appears in search immediately after creation', async () => {
+    // This is the "No match -> Create" flow on the Purchases screen: the new
+    // product has to be findable at once or the manager is left staring at the
+    // same empty search box.
+    const created = await post('/api/catalog/products', {
+      name: 'Delta 4',
+      companyId: 'co_engro',
+      category: 'insecticide',
+      packSize: '250 ml',
+      purchaseRate: 950,
+      saleRate: 1150,
+      openingQty: 12,
+    });
+    expect(created.status).toBe(201);
+
+    const res = await SELF.fetch('https://api.test/api/catalog/products?q=Del&limit=5', {
+      headers: { Cookie: cookie },
+    });
+    const body = await res.json<{ products: { name: string; qty_on_hand_milli: number }[] }>();
+    const found = body.products.find((p) => p.name === 'Delta 4');
+    expect(found).toBeTruthy();
+    expect(found!.qty_on_hand_milli).toBe(12000);
+  });
+
   it('searches products by name prefix', async () => {
     // Creates its own fixture: with isolated storage every test starts clean.
     const created = await post('/api/catalog/products', {

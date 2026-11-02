@@ -225,3 +225,25 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .opening-summary .alert {
   margin: 12px 0 0;
 }
+
+/* ---------- compact form grids (new product, quick-create) ---------- */
+
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 12px;
+}
+
+.form-grid .span-2 {
+  grid-column: span 2;
+}
+
+@media (max-width: 560px) {
+  .form-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .form-grid .span-2 {
+    grid-column: span 2;
+  }
+}

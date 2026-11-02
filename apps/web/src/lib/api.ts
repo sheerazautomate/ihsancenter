@@ -166,6 +166,15 @@ export interface PostedSale {
 
 // ---------- additional shapes ----------
 
+/** Fixed set from the schema CHECK constraint on products.category. */
+export type ProductCategory =
+  | 'insecticide'
+  | 'fungicide'
+  | 'herbicide'
+  | 'fertilizer'
+  | 'seed'
+  | 'other';
+
 export interface Company {
   id: string;
   name: string;

@@ -10,6 +10,8 @@ export default function ReceivablesPage() {
   const [mode, setMode] = useState<'cash' | 'bank' | 'cheque'>('cash');
   const [account, setAccount] = useState('ca_counter');
   const [reference, setReference] = useState('');
+  // null = "oldest first", the old behaviour. An id = clear that bill specifically.
+  const [invoiceId, setInvoiceId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -31,6 +33,29 @@ export default function ReceivablesPage() {
   });
 
   const total = (receivables.data?.customers ?? []).reduce((s, c) => s + c.totalPaisa, 0);
+  const openInvoices = unpaid.data?.invoices ?? [];
+  const chosen = openInvoices.find((i) => i.id === invoiceId) ?? null;
+  // What this payment will clear: the chosen bill, or -- when the customer pays a
+  // round figure -- whatever the amount reaches, oldest first, which is what the
+  // server does when no allocation is sent.
+  const willSettle = chosen ? Math.min(parseNumber(amount) * 100, chosen.bal) : 0;
+
+  function pickCustomer(c: ReceivableRow) {
+    setSelected(c);
+    setInvoiceId(null);
+    setAmount('');
+    setError(null);
+    setSuccess(null);
+    setReference('');
+  }
+
+  /** Choose a bill and prefill the amount with exactly what it still owes. */
+  function pickInvoice(i: UnpaidInvoice) {
+    setInvoiceId(i.id);
+    setAmount(String(i.bal / 100));
+    setError(null);
+    setSuccess(null);
+  }
 
   async function collect() {
     if (!selected) return;
@@ -50,6 +75,13 @@ export default function ReceivablesPage() {
           mode,
           cashAccountId: account,
           reference: reference || undefined,
+          // Explicit allocation when a specific bill was picked. Never more than
+          // that bill owes; any extra stays with the customer as an advance rather
+          // than silently clearing a different invoice.
+          allocations:
+            chosen && willSettle > 0
+              ? [{ invoiceId: chosen.id, amount: willSettle / 100 }]
+              : undefined,
         }),
       });
 
@@ -57,9 +89,11 @@ export default function ReceivablesPage() {
         res.receipt.unallocatedPaisa > 0
           ? ` ${formatPkr(res.receipt.unallocatedPaisa)} is held as an advance.`
           : '';
-      setSuccess(`Receipt ${res.receipt.receiptNo} recorded.${extra}`);
+      const against = chosen ? ` Cleared ${formatPkr(willSettle)} of ${chosen.invoice_no}.` : '';
+      setSuccess(`Receipt ${res.receipt.receiptNo} recorded.${against}${extra}`);
       setAmount('');
       setReference('');
+      setInvoiceId(null);
       await queryClient.invalidateQueries({ queryKey: ['receivables'] });
       await queryClient.invalidateQueries({ queryKey: ['unpaid'] });
       await queryClient.invalidateQueries({ queryKey: ['customers'] });
@@ -106,7 +140,7 @@ export default function ReceivablesPage() {
                 {receivables.data!.customers.map((c) => (
                   <tr
                     key={c.customerId}
-                    onClick={() => setSelected(c)}
+                    onClick={() => pickCustomer(c)}
                     style={{ cursor: 'pointer', background: selected?.customerId === c.customerId ? 'var(--green-50)' : undefined }}
                   >
                     <td>
@@ -208,10 +242,12 @@ export default function ReceivablesPage() {
               {success && <div className="alert success">{success}</div>}
 
               <button className="btn block" disabled={busy} onClick={collect}>
-                {busy ? 'Saving…' : 'Record receipt'}
+                {busy ? 'Saving…' : chosen ? `Clear ${chosen.invoice_no}` : 'Record receipt'}
               </button>
               <p className="muted" style={{ fontSize: 12, margin: 0 }}>
-                Applied to the oldest invoices first.
+                {chosen
+                  ? `Goes against ${chosen.invoice_no}, which still owes ${formatPkr(chosen.bal)}. Anything extra stays as an advance.`
+                  : 'Applied to the oldest invoices first. Pick a bill above to clear a specific one.'}
               </p>
             </div>
           </div>
@@ -221,19 +257,43 @@ export default function ReceivablesPage() {
             {(unpaid.data?.invoices ?? []).length === 0 ? (
               <p className="muted">Nothing outstanding.</p>
             ) : (
-              <table>
-                <tbody>
-                  {unpaid.data!.invoices.map((i) => (
-                    <tr key={i.id}>
-                      <td>
-                        {i.invoice_no}
-                        <div className="muted" style={{ fontSize: 12 }}>{i.doc_date}</div>
-                      </td>
-                      <td className="num mono">{formatPkr(i.bal)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+              <>
+                <p className="muted" style={{ fontSize: 12, marginTop: 0 }}>
+                  Tap the bill the customer wants to clear. The amount fills in for you.
+                </p>
+                <table>
+                  <tbody>
+                    {unpaid.data!.invoices.map((i) => (
+                      <tr
+                        key={i.id}
+                        onClick={() => pickInvoice(i)}
+                        style={{
+                          cursor: 'pointer',
+                          background: invoiceId === i.id ? 'var(--green-50)' : undefined,
+                        }}
+                      >
+                        <td>
+                          {i.invoice_no}
+                          {invoiceId === i.id && (
+                            <span className="badge" style={{ marginLeft: 6 }}>selected</span>
+                          )}
+                          <div className="muted" style={{ fontSize: 12 }}>{i.doc_date}</div>
+                        </td>
+                        <td className="num mono">{formatPkr(i.bal)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                {invoiceId && (
+                  <button
+                    className="btn secondary sm"
+                    style={{ marginTop: 8 }}
+                    onClick={() => { setInvoiceId(null); setAmount(''); }}
+                  >
+                    Clear selection (apply oldest first)
+                  </button>
+                )}
+              </>
             )}
           </div>
         </div>

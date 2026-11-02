@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useParams } from 'react-router-dom';
-import { api, ApiError, type Invoice, type InvoiceLine } from '../lib/api';
+import { api, ApiError, type Invoice, type InvoiceLine, type InvoicePayment } from '../lib/api';
 import Receipt from '../components/Receipt';
 
 export default function InvoiceDetailPage() {
@@ -12,7 +12,8 @@ export default function InvoiceDetailPage() {
 
   const { data, isLoading } = useQuery({
     queryKey: ['invoice', id],
-    queryFn: () => api<{ invoice: Invoice; lines: InvoiceLine[] }>(`/sales/${id}`),
+    queryFn: () =>
+      api<{ invoice: Invoice; lines: InvoiceLine[]; payment: InvoicePayment }>(`/sales/${id}`),
     enabled: !!id,
   });
 
@@ -58,7 +59,7 @@ export default function InvoiceDetailPage() {
         </div>
       )}
 
-      <Receipt invoice={data.invoice} lines={data.lines} />
+      <Receipt invoice={data.invoice} lines={data.lines} payment={data.payment} />
     </div>
   );
 }

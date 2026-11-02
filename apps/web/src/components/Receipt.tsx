@@ -1,5 +1,5 @@
 import { formatPkr, formatQty } from '../lib/money';
-import type { Invoice, InvoiceLine } from '../lib/api';
+import type { Invoice, InvoiceLine, InvoicePayment } from '../lib/api';
 
 /**
  * Printable invoice.
@@ -8,7 +8,15 @@ import type { Invoice, InvoiceLine } from '../lib/api';
  * driver installed, on an 80mm roll. No PDF library, so no paid dependency:
  * the browser's own "Save as PDF" produces the WhatsApp-shareable copy.
  */
-export default function Receipt({ invoice, lines }: { invoice: Invoice; lines: InvoiceLine[] }) {
+export default function Receipt({
+  invoice,
+  lines,
+  payment,
+}: {
+  invoice: Invoice;
+  lines: InvoiceLine[];
+  payment?: InvoicePayment;
+}) {
   return (
     <div className="receipt">
       <h1>Ihsan Center</h1>
@@ -79,16 +87,49 @@ export default function Receipt({ invoice, lines }: { invoice: Invoice; lines: I
           )}
           {invoice.credit_paisa > 0 && (
             <tr>
-              <td>
-                <strong>On credit (udhaar)</strong>
-              </td>
-              <td style={{ textAlign: 'right' }}>
-                <strong>{formatPkr(invoice.credit_paisa)}</strong>
+              <td>On credit (udhaar)</td>
+              <td style={{ textAlign: 'right' }}>{formatPkr(invoice.credit_paisa)}</td>
+            </tr>
+          )}
+          {/* Only shown once money has actually come in against this bill. A
+              reprint used to state the full credit as though nothing had been
+              paid, which is the one line a farmer checks. */}
+          {payment && payment.settledPaisa > 0 && (
+            <>
+              <tr>
+                <td>Received since</td>
+                <td style={{ textAlign: 'right' }}>-{formatPkr(payment.settledPaisa)}</td>
+              </tr>
+              <tr>
+                <td>
+                  <strong>Still owed</strong>
+                </td>
+                <td style={{ textAlign: 'right', fontSize: 16 }}>
+                  <strong>{formatPkr(payment.outstandingPaisa)}</strong>
+                </td>
+              </tr>
+            </>
+          )}
+          {invoice.credit_paisa > 0 && payment && payment.outstandingPaisa === 0 && (
+            <tr>
+              <td colSpan={2} style={{ textAlign: 'center', fontWeight: 600 }}>
+                PAID IN FULL
               </td>
             </tr>
           )}
         </tbody>
       </table>
+
+      {payment && payment.receipts.length > 0 && (
+        <div style={{ fontSize: 11, marginTop: 8 }}>
+          <strong>Payments received</strong>
+          {payment.receipts.map((r) => (
+            <div key={r.receipt_no} className="muted">
+              {r.doc_date} · {r.receipt_no} · {r.mode} · {formatPkr(r.amount_paisa)}
+            </div>
+          ))}
+        </div>
+      )}
 
       {invoice.status === 'void' && (
         <div className="alert error" style={{ marginTop: 12, textAlign: 'center' }}>

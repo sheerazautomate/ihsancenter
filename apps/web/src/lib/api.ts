@@ -111,6 +111,7 @@ export interface Customer {
   type: string;
   credit_limit_paisa: number;
   is_credit_hold: number;
+  is_active?: number;
   outstanding_paisa: number;
 }
 
@@ -154,6 +155,14 @@ export interface Invoice {
   credit_paisa: number;
   status: string;
   created_at: string;
+}
+
+/** What has been received against an invoice since it was issued. */
+export interface InvoicePayment {
+  settledPaisa: number;
+  outstandingPaisa: number;
+  overpaidPaisa: number;
+  receipts: { receipt_no: string; doc_date: string; mode: string; amount_paisa: number }[];
 }
 
 export interface PostedSale {

@@ -23,6 +23,17 @@ interface FormState {
   isCreditHold: boolean;
 }
 
+interface CustomerUsage {
+  invoices: number;
+  returns: number;
+  receipts: number;
+  ledgerEntries: number;
+  balancePaisa: number;
+  canDelete: boolean;
+  canDeactivate: boolean;
+  blockedBy: string | null;
+}
+
 const EMPTY: FormState = {
   id: null,
   name: '',
@@ -54,12 +65,23 @@ export default function CustomersPage() {
 
   const { data } = useQuery({
     queryKey: ['customers', 'list', q],
-    queryFn: () => api<{ customers: Customer[] }>(`/customers?q=${encodeURIComponent(q)}&limit=50`),
+    // all=1: a deactivated customer has to stay findable, otherwise hiding someone
+    // by mistake is unrecoverable from this screen.
+    queryFn: () => api<{ customers: Customer[] }>(`/customers?q=${encodeURIComponent(q)}&limit=50&all=1`),
   });
 
   const ledger = useQuery({
     queryKey: ['customer-ledger', selected?.id],
     queryFn: () => api<{ entries: LedgerEntry[] }>(`/customers/${selected!.id}/ledger`),
+    enabled: !!selected,
+  });
+
+  // Checked before the manager clicks, not after: a customer with history must
+  // show why they cannot go, rather than a button that fails on press.
+  const usage = useQuery({
+    queryKey: ['customer-usage', selected?.id],
+    queryFn: () =>
+      api<{ usage: CustomerUsage }>(`/customers/${selected!.id}/usage`),
     enabled: !!selected,
   });
 
@@ -123,6 +145,50 @@ export default function CustomersPage() {
       await queryClient.invalidateQueries({ queryKey: ['customers'] });
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not save the customer');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function remove(c: Customer) {
+    setError(null);
+    setNotice(null);
+    // Typed confirmation, not a yes/no box: a duplicate is deleted in a second,
+    // and an accidental "OK" here costs a customer's whole history.
+    const typed = window.prompt(`Type the name to delete ${c.name} permanently:`);
+    if (typed === null) return;
+    if (typed.trim().toLowerCase() !== c.name.trim().toLowerCase()) {
+      return setError('The name did not match, so nothing was deleted.');
+    }
+
+    setBusy(true);
+    try {
+      await api(`/customers/${c.id}`, { method: 'DELETE' });
+      setNotice(`${c.name} deleted`);
+      setSelected(null);
+      await queryClient.invalidateQueries({ queryKey: ['customers'] });
+      await queryClient.invalidateQueries({ queryKey: ['dashboard'] });
+    } catch (e) {
+      // The server names the blocker; show it verbatim.
+      setError(e instanceof Error ? e.message : 'Could not delete the customer');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function toggleActive(c: Customer) {
+    setError(null);
+    setNotice(null);
+    setBusy(true);
+    try {
+      await api(`/customers/${c.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ isActive: c.is_active !== 1 }),
+      });
+      setNotice(c.is_active === 1 ? `${c.name} deactivated` : `${c.name} reactivated`);
+      await queryClient.invalidateQueries({ queryKey: ['customers'] });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not update the customer');
     } finally {
       setBusy(false);
     }
@@ -268,6 +334,7 @@ export default function CustomersPage() {
                   >
                     <td>
                       {c.name}
+                      {c.is_active === 0 && <span className="badge void" style={{ marginLeft: 6 }}>inactive</span>}
                       {c.is_credit_hold === 1 && <span className="badge void" style={{ marginLeft: 6 }}>hold</span>}
                       <div className="muted" style={{ fontSize: 12 }}>
                         {[c.phone, c.village].filter(Boolean).join(' · ') || c.type}
@@ -305,7 +372,10 @@ export default function CustomersPage() {
           <div className="card">
             <div className="row">
               <div className="grow">
-                <h2 style={{ marginBottom: 2 }}>{selected.name}</h2>
+                <h2 style={{ marginBottom: 2 }}>
+                  {selected.name}
+                  {selected.is_active === 0 && <span className="badge void" style={{ marginLeft: 8 }}>inactive</span>}
+                </h2>
                 <div className="muted">
                   {[selected.phone, selected.village].filter(Boolean).join(' · ') || 'No phone or village recorded'}
                 </div>
@@ -341,6 +411,45 @@ export default function CustomersPage() {
                 </tr>
               </tbody>
             </table>
+
+            {usage.data && !usage.data.usage.canDelete && (
+              <div className="alert warn" style={{ marginTop: 12 }}>
+                <strong>This customer cannot be deleted.</strong>{' '}
+                {(usage.data.usage.blockedBy ?? '').replace(/\.$/, '')}.
+                <div style={{ marginTop: 4 }}>
+                  {usage.data.usage.canDeactivate
+                    ? 'Deactivate them instead — they disappear from billing and the history stays.'
+                    : 'This row is used by the billing screen and must stay.'}
+                </div>
+              </div>
+            )}
+
+            {error && <div className="alert error" style={{ marginTop: 12 }}>{error}</div>}
+            {notice && <div className="alert success" style={{ marginTop: 12 }}>{notice}</div>}
+
+            <div className="row wrap" style={{ marginTop: 12 }}>
+              {usage.data?.usage.canDeactivate && (
+                <button className="btn secondary" onClick={() => toggleActive(selected)} disabled={busy}>
+                  {selected.is_active === 0 ? 'Reactivate' : 'Deactivate'}
+                </button>
+              )}
+              <button
+                className="btn danger"
+                onClick={() => remove(selected)}
+                disabled={busy || !usage.data?.usage.canDelete}
+                title={
+                  usage.data?.usage.canDelete
+                    ? 'Delete this customer permanently'
+                    : usage.data?.usage.blockedBy ?? 'Checking…'
+                }
+              >
+                Delete customer
+              </button>
+            </div>
+            <p className="muted" style={{ fontSize: 12, marginBottom: 0, marginTop: 6 }}>
+              Deleting is only for a customer added by mistake or entered twice. Anyone with
+              invoices, receipts or an outstanding balance keeps their history.
+            </p>
           </div>
 
           <div className="card">

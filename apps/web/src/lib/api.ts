@@ -111,6 +111,7 @@ export interface Customer {
   type: string;
   credit_limit_paisa: number;
   is_credit_hold: number;
+  is_active?: number;
   outstanding_paisa: number;
 }
 

@@ -523,3 +523,44 @@ already handled this (`replayed: true`, HTTP 200); supplier payments did not. No
 do, and the test asserts the status code, not just the arithmetic -- the failure only
 appeared against a real server, which is the argument for driving these screens live
 rather than trusting a green suite.
+
+## Deleting a customer: for mistakes, not for people
+
+The request was narrow on purpose: delete a customer who was typed twice, or typed
+who does not exist. That is the right scope, because a paper register never had the
+problem — you crossed out a line. In the database you cannot cross out a customer who
+owns twenty invoices.
+
+So the delete is available, and it is gated on the same dependency audit as companies:
+
+1. non-zero balance — **in either direction**: "they still owe Rs 12,000.00" or
+   "they are holding Rs X of the shop's money". An advance is not a settled account.
+2. invoices in their name
+3. sale returns against them
+4. receipts collected from them
+5. any customer ledger entry
+
+Anything with a single row of history is refused with a 409 that names the blocker,
+and the screen shows the reason before the button is pressed — Delete is disabled with
+the explanation beside it.
+
+**The live run is what made the case.** A customer with one fully-paid cash sale had
+`balancePaisa: 0` and `ledgerEntries: 0`: two checks said "safe to delete". Only the
+invoice count stopped it. A balance-only rule would have deleted the customer and left
+the invoice pointing at nothing.
+
+### Two details worth keeping
+
+- **`cust_walkin` must survive.** Billing posts cash sales against that row by id. It
+  is excluded explicitly, `canDeactivate: false` as well, and the refusal message no
+  longer says "deactivate instead" for it — the first version did, which would have
+  sent the manager to a button that is not on the screen. Caught by running the delete
+  against a live server, not by the test, which only checked the status code.
+- **Deactivating has to be reversible.** `GET /api/customers` is still active-only by
+  default, so billing and receipts cannot offer a hidden customer; `?all=1` brings them
+  back for the management screen, which is the only place they could be restored from.
+  Without that, hiding someone by mistake would be a one-way door. Both directions are
+  tested.
+
+The UI asks you to **type the name** to confirm rather than clicking OK. A duplicate
+is deleted in two seconds; an accidental confirmation costs a customer's whole history.

@@ -16,7 +16,7 @@ not_found_handling = "single-page-application"
 binding = "DB"
 database_name = "ihsancenter"
 # Replace with the id printed by:  wrangler d1 create ihsancenter
-database_id = "REPLACE_WITH_YOUR_DATABASE_ID"
+database_id = "3e6381e9-f339-46e4-bc85-e4c102327c5a"
 migrations_dir = "migrations"
 
 [observability]

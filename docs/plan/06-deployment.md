@@ -173,9 +173,9 @@ There is no user until you do this. The endpoint works **once**, then refuses
 forever, so it cannot be used later to add accounts.
 
 ```bash
-curl -X POST https://ihsancenter-api.<your-subdomain>.workers.dev/api/auth/bootstrap \
+curl -X POST https://ihsancenter-api.sedp.workers.dev/api/auth/bootstrap \
   -H 'Content-Type: application/json' \
-  -d '{"name":"Ihsan","username":"ihsan","password":"PUT-A-REAL-PASSWORD-HERE"}'
+  -d '{"name":"Ihsan","username":"ihsan","password":"mypassword"}'
 ```
 
 Then open the URL and sign in.

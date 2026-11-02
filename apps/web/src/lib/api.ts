@@ -120,3 +120,93 @@ export interface PostedSale {
   creditPaisa: number;
   costTotalPaisa: number;
 }
+
+// ---------- additional shapes ----------
+
+export interface Company {
+  id: string;
+  name: string;
+  contact_person: string | null;
+  phone: string | null;
+}
+
+export interface CashAccount {
+  id: string;
+  name: string;
+  type: 'cash' | 'bank';
+  bank_name: string | null;
+  account_no: string | null;
+}
+
+export interface ExpenseCategory {
+  id: string;
+  name: string;
+}
+
+export interface CompanyTotals {
+  companyId: string;
+  name: string;
+  purchasesPaisa: number;
+  salesPaisa: number;
+  costPaisa: number;
+  grossProfitPaisa: number;
+  payablePaisa: number;
+}
+
+export interface Dashboard {
+  date: string;
+  today: {
+    salesPaisa: number;
+    collectedPaisa: number;
+    creditGivenPaisa: number;
+    expensesPaisa: number;
+    receiptsPaisa: number;
+    invoiceCount: number;
+  } | null;
+  month: {
+    salesPaisa: number;
+    collectedPaisa: number;
+    creditGivenPaisa: number;
+    expensesPaisa: number;
+    receiptsPaisa: number;
+    invoiceCount: number;
+  } | null;
+  monthFrom: string;
+  profit: {
+    revenuePaisa: number;
+    cogsPaisa: number;
+    grossProfitPaisa: number;
+    expensesPaisa: number;
+    netProfitPaisa: number;
+  };
+  cash: { id: string; name: string; type: string; balancePaisa: number }[];
+  companies: CompanyTotals[];
+  totalReceivablePaisa: number;
+  lowStockCount: number;
+}
+
+export interface ReceivableRow {
+  customerId: string;
+  name: string;
+  phone: string | null;
+  village: string | null;
+  creditLimitPaisa: number;
+  isCreditHold: number;
+  /** Ledger balance: the authoritative figure. */
+  totalPaisa: number;
+  d0to30: number;
+  d31to60: number;
+  d61to90: number;
+  d90plus: number;
+  /** Balance not attributable to any invoice (opening balance or advance). */
+  unappliedPaisa: number;
+}
+
+export interface UnpaidInvoice {
+  id: string;
+  invoice_no: string;
+  doc_date: string;
+  total_paisa: number;
+  credit_paisa: number;
+  bal: number;
+}

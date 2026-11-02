@@ -4,6 +4,9 @@ import { authRoutes } from './routes/auth';
 import { salesRoutes } from './routes/sales';
 import { catalogRoutes } from './routes/catalog';
 import { customerRoutes } from './routes/customers';
+import { purchaseRoutes } from './routes/purchases';
+import { moneyRoutes } from './routes/money';
+import { reportRoutes } from './routes/reports';
 import type { AppEnv } from './middleware';
 
 const app = new Hono<AppEnv>();
@@ -39,6 +42,9 @@ app.route('/api/auth', authRoutes);
 app.route('/api/sales', salesRoutes);
 app.route('/api/catalog', catalogRoutes);
 app.route('/api/customers', customerRoutes);
+app.route('/api/purchases', purchaseRoutes);
+app.route('/api/money', moneyRoutes);
+app.route('/api/reports', reportRoutes);
 
 app.notFound((c) => c.json({ error: 'Not found' }, 404));
 

@@ -3,6 +3,11 @@ import { NavLink, Route, Routes, useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from './lib/api';
 import LoginPage from './pages/Login';
+import DashboardPage from './pages/Dashboard';
+import PurchasesPage from './pages/Purchases';
+import ReceivablesPage from './pages/Receivables';
+import ExpensesPage from './pages/Expenses';
+import ReportsPage from './pages/Reports';
 import BillingPage from './pages/Billing';
 import InvoicesPage from './pages/Invoices';
 import InvoiceDetailPage from './pages/InvoiceDetail';
@@ -68,18 +73,25 @@ function Shell({ user }: { user: CurrentUser }) {
           <small>Pesticides · Accounts</small>
         </div>
         <nav className="tabs">
-          <NavLink to="/" end className={({ isActive }) => `tab ${isActive ? 'active' : ''}`}>
-            Billing
-          </NavLink>
-          <NavLink to="/invoices" className={({ isActive }) => `tab ${isActive ? 'active' : ''}`}>
-            Invoices
-          </NavLink>
-          <NavLink to="/stock" className={({ isActive }) => `tab ${isActive ? 'active' : ''}`}>
-            Stock
-          </NavLink>
-          <NavLink to="/customers" className={({ isActive }) => `tab ${isActive ? 'active' : ''}`}>
-            Customers
-          </NavLink>
+          {[
+            ['/', 'Billing', true],
+            ['/invoices', 'Invoices', false],
+            ['/purchases', 'Purchases', false],
+            ['/receivables', 'Udhaar', false],
+            ['/stock', 'Stock', false],
+            ['/expenses', 'Expenses', false],
+            ['/reports', 'Reports', false],
+            ['/dashboard', 'Dashboard', false],
+          ].map(([path, label, end]) => (
+            <NavLink
+              key={path as string}
+              to={path as string}
+              end={end as boolean}
+              className={({ isActive }) => `tab ${isActive ? 'active' : ''}`}
+            >
+              {label as string}
+            </NavLink>
+          ))}
         </nav>
         <div className="spacer" />
         {!online && <span className="badge void">Offline</span>}
@@ -94,6 +106,11 @@ function Shell({ user }: { user: CurrentUser }) {
       <main className="content">
         <Routes>
           <Route path="/" element={<BillingPage />} />
+          <Route path="/dashboard" element={<DashboardPage />} />
+          <Route path="/purchases" element={<PurchasesPage />} />
+          <Route path="/receivables" element={<ReceivablesPage />} />
+          <Route path="/expenses" element={<ExpensesPage />} />
+          <Route path="/reports" element={<ReportsPage />} />
           <Route path="/invoices" element={<InvoicesPage />} />
           <Route path="/invoices/:id" element={<InvoiceDetailPage />} />
           <Route path="/stock" element={<StockPage />} />

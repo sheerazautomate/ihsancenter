@@ -9,9 +9,11 @@ export default defineWorkersConfig({
         singleWorker: true,
         // Needed for the SELF service binding used by the HTTP tests.
         main: './src/index.ts',
-        // The suite is written as a sequence (later tests assert on state built by
-        // earlier ones), so storage must persist across tests in a file.
-        isolatedStorage: false,
+        // Each test gets its own storage snapshot, rolled back afterwards. Every
+        // test creates the fixtures it needs in beforeEach, so no test can be
+        // broken by another file's cleanup -- which is what happened when all
+        // files shared one database.
+        isolatedStorage: true,
         miniflare: {
           compatibilityDate: '2024-12-18',
           compatibilityFlags: ['nodejs_compat'],

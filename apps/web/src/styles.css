@@ -49,10 +49,11 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .topbar .brand small { display: block; font-weight: 400; font-size: 11px; opacity: 0.7; }
 .topbar .spacer { flex: 1; }
 
-.tabs { display: flex; gap: 4px; background: rgba(255,255,255,0.1); padding: 3px; border-radius: 8px; }
+.tabs { display: flex; gap: 4px; background: rgba(255,255,255,0.1); padding: 3px; border-radius: 8px; flex-wrap: wrap; }
 .tab {
   border: 0; background: transparent; color: rgba(255,255,255,0.75);
-  padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 14px;
+  padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 14px;
+  text-decoration: none; white-space: nowrap;
 }
 .tab.active { background: white; color: var(--green-900); font-weight: 600; }
 
@@ -168,3 +169,10 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 /* ---------- login ---------- */
 .login-wrap { display: flex; align-items: center; justify-content: center; min-height: 100vh; padding: 20px; }
 .login-card { width: 100%; max-width: 380px; }
+
+/* the tab row scrolls horizontally on a phone */
+@media (max-width: 760px) {
+  .topbar { flex-wrap: wrap; }
+  .topbar .tabs { order: 3; width: 100%; overflow-x: auto; }
+  .content { padding: 12px; }
+}

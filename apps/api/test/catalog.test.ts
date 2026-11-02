@@ -96,11 +96,21 @@ describe('catalog', () => {
   });
 
   it('searches products by name prefix', async () => {
-    const res = await SELF.fetch('https://api.test/api/catalog/products?q=Test%20Insect', {
+    // Creates its own fixture: with isolated storage every test starts clean.
+    const created = await post('/api/catalog/products', {
+      name: 'Searchable Spray 250ml',
+      companyId: 'co_engro',
+      category: 'insecticide',
+      purchaseRate: 100,
+      saleRate: 150,
+    });
+    expect(created.status).toBe(201);
+
+    const res = await SELF.fetch('https://api.test/api/catalog/products?q=Searchable', {
       headers: { Cookie: cookie },
     });
     const body = await res.json<{ products: { name: string }[] }>();
-    expect(body.products.some((p) => p.name === 'Test Insecticide 500ml')).toBe(true);
+    expect(body.products.some((p) => p.name === 'Searchable Spray 250ml')).toBe(true);
   });
 });
 

@@ -157,6 +157,14 @@ export interface Invoice {
   created_at: string;
 }
 
+/** What has been received against an invoice since it was issued. */
+export interface InvoicePayment {
+  settledPaisa: number;
+  outstandingPaisa: number;
+  overpaidPaisa: number;
+  receipts: { receipt_no: string; doc_date: string; mode: string; amount_paisa: number }[];
+}
+
 export interface PostedSale {
   id: string;
   invoiceNo: string;

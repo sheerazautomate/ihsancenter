@@ -121,10 +121,20 @@ salesRoutes.get('/', async (c) => {
   const limit = Math.min(Number(c.req.query('limit') ?? 50), 200);
 
   const rows = await c.env.DB.prepare(
+    // outstanding_paisa is what makes the invoice list useful after a collection:
+    // a bill can be listed as credit Rs 5,000 while only Rs 2,000 is still owed.
     `SELECT i.id, i.invoice_no, i.doc_date, i.total_paisa, i.credit_paisa, i.status,
-            c.name AS customer_name
+            c.name AS customer_name,
+            MAX(0, b.bal) AS outstanding_paisa,
+            CASE
+              WHEN i.credit_paisa = 0 THEN 'paid'
+              WHEN b.bal <= 0 THEN 'settled'
+              WHEN b.bal < i.credit_paisa THEN 'part'
+              ELSE 'open'
+            END AS pay_state
      FROM sales_invoices i
      JOIN customers c ON c.id = i.customer_id
+     LEFT JOIN (${INVOICE_BALANCE_SQL}) b ON b.id = i.id
      WHERE i.doc_date BETWEEN ? AND ?
        AND (? IS NULL OR i.customer_id = ?)
      ORDER BY i.doc_date DESC, i.id DESC
@@ -136,16 +146,46 @@ salesRoutes.get('/', async (c) => {
   return c.json({ invoices: rows.results });
 });
 
-/** Full invoice for printing / reprint. */
+/**
+ * Full invoice for printing / reprint.
+ *
+ * `payment` carries what has actually been received against this bill since it was
+ * issued. Without it a reprinted invoice kept showing the whole credit as still
+ * owed long after the farmer had paid -- the shop handed out a receipt that said
+ * "udhaar Rs 12,000" on an account that was clear.
+ */
 salesRoutes.get('/:id', async (c) => {
   const invoice = await c.env.DB.prepare(
-    `SELECT i.*, c.name AS customer_name, c.phone AS customer_phone, c.village AS customer_village
+    `SELECT i.*, c.name AS customer_name, c.phone AS customer_phone, c.village AS customer_village,
+            COALESCE((SELECT SUM(a.amount_paisa) FROM receipt_allocations a
+                       WHERE a.invoice_id = i.id), 0)
+              + COALESCE((SELECT SUM(r.credit_note_paisa) FROM sale_returns r
+                           WHERE r.invoice_id = i.id AND r.status = 'open'), 0) AS settled_paisa
      FROM sales_invoices i JOIN customers c ON c.id = i.customer_id WHERE i.id = ?`,
   )
     .bind(c.req.param('id'))
-    .first();
+    .first<Record<string, unknown>>();
 
   if (!invoice) return c.json({ error: 'Invoice not found' }, 404);
+
+  const settledPaisa = Number(invoice.settled_paisa ?? 0);
+  const creditPaisa = Number(invoice.credit_paisa ?? 0);
+  const received = await c.env.DB.prepare(
+    `SELECT r.receipt_no, r.doc_date, r.mode, a.amount_paisa
+     FROM receipt_allocations a JOIN customer_receipts r ON r.id = a.receipt_id
+     WHERE a.invoice_id = ?
+     ORDER BY r.doc_date ASC, r.created_at ASC`,
+  )
+    .bind(c.req.param('id'))
+    .all();
+
+  const payment = {
+    settledPaisa,
+    outstandingPaisa: Math.max(0, creditPaisa - settledPaisa),
+    // Overpaid/credit-note cases: never show a negative "still owed".
+    overpaidPaisa: Math.max(0, settledPaisa - creditPaisa),
+    receipts: received.results,
+  };
 
   const lines = await c.env.DB.prepare(
     `SELECT l.*, p.name AS product_name, p.unit, p.pack_size
@@ -155,7 +195,7 @@ salesRoutes.get('/:id', async (c) => {
     .bind(c.req.param('id'))
     .all();
 
-  return c.json({ invoice, lines: lines.results });
+  return c.json({ invoice, lines: lines.results, payment });
 });
 
 /** The credit panel the billing screen shows before the manager commits. */

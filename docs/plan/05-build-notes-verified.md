@@ -564,3 +564,45 @@ the invoice pointing at nothing.
 
 The UI asks you to **type the name** to confirm rather than clicking OK. A duplicate
 is deleted in two seconds; an accidental confirmation costs a customer's whole history.
+
+## Collecting against the bill the customer names
+
+Udhaar allocated every receipt **oldest first**, unconditionally. The API had
+accepted an explicit `allocations` array since it was written, and validated it
+properly — the screen simply never sent one, so a farmer who came to clear the bill
+he was holding had his money applied to an older one. The receipt was correct; the
+answer to "is my bill clear?" was not.
+
+Now the unpaid-bill list in Udhaar is selectable. Tapping a bill pre-fills the amount
+with exactly what that bill still owes and sends:
+
+    allocations: [{ invoiceId: chosen.id, amount: min(amountPaid, billBalance) }]
+
+"Clear selection" returns to oldest-first, so the old behaviour is still one tap away
+and is still the default.
+
+**The excess stays an advance.** If the customer hands over Rs 500 for a Rs 200 bill,
+the screen allocates Rs 200 and the other Rs 300 lands as an advance, which the
+receipt already reported. It must not silently clear a second invoice the customer
+did not mention — that is how a shop ends up arguing about a bill nobody remembers
+agreeing to settle. Tested explicitly.
+
+### The printed invoice was the real bug
+
+`GET /api/sales/:id` returned the invoice row and nothing about what had been paid
+since. So a reprinted invoice — the copy a farmer keeps, and the one he checks when
+he is asked for money — kept stating the full credit as outstanding after it had been
+cleared. It now carries:
+
+    payment: { settledPaisa, outstandingPaisa, overpaidPaisa, receipts[] }
+
+and the printed receipt shows "Received since", "Still owed", a "PAID IN FULL" line,
+and the list of receipts with dates and modes. `GET /api/sales` gained
+`outstanding_paisa` and `pay_state` (`paid | settled | part | open`), so the Invoices
+tab shows "still owed" beside the credited amount instead of repeating the original
+figure forever.
+
+Verified live: two credit invoices for the same farmer; clearing the newer one left
+the older untouched and marked the cleared one `settled`; a part payment showed
+`part` with the remainder, and the customer balance reconciled to the rupee
+(12,000 opening + 700 new credit − 550 received = 12,150) with integrity ok.

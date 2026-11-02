@@ -12,6 +12,8 @@ interface InvoiceRow {
   credit_paisa: number;
   status: string;
   customer_name: string;
+  outstanding_paisa: number;
+  pay_state: 'paid' | 'settled' | 'part' | 'open';
 }
 
 export default function InvoicesPage() {
@@ -75,6 +77,7 @@ export default function InvoicesPage() {
                 <th>Customer</th>
                 <th className="num">Total</th>
                 <th className="num">Credit</th>
+                <th className="num">Still owed</th>
                 <th></th>
               </tr>
             </thead>
@@ -90,6 +93,20 @@ export default function InvoicesPage() {
                   <td className="num mono">{formatPkr(i.total_paisa)}</td>
                   <td className="num mono" style={{ color: i.credit_paisa > 0 ? 'var(--amber-600)' : undefined }}>
                     {i.credit_paisa > 0 ? formatPkr(i.credit_paisa) : '—'}
+                  </td>
+                  <td className="num mono">
+                    {i.status === 'void' ? (
+                      <span className="muted">—</span>
+                    ) : i.pay_state === 'paid' || i.pay_state === 'settled' ? (
+                      <span className="badge">paid</span>
+                    ) : i.pay_state === 'part' ? (
+                      <>
+                        <strong>{formatPkr(i.outstanding_paisa)}</strong>
+                        <div className="muted" style={{ fontSize: 11 }}>part paid</div>
+                      </>
+                    ) : (
+                      <strong>{formatPkr(i.outstanding_paisa)}</strong>
+                    )}
                   </td>
                   <td>
                     <Link className="btn secondary sm" to={`/invoices/${i.id}`}>

@@ -1,0 +1,30 @@
+{
+  "name": "@ihsan/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev --port 8787 --ip 0.0.0.0",
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc --noEmit",
+    "db:migrate:local": "wrangler d1 execute ihsancenter --local --yes --file=./migrations/0001_init.sql && wrangler d1 execute ihsancenter --local --yes --file=./migrations/0002_seed.sql && wrangler d1 execute ihsancenter --local --yes --file=./migrations/0003_auth_and_idempotency.sql",
+    "db:seed:local": "wrangler d1 execute ihsancenter --local --yes --file=./demo/demo_seed.sql",
+    "db:reset:local": "node ../../scripts/reset-db.mjs",
+    "db:console": "wrangler d1 execute ihsancenter --local --command",
+    "test": "vitest run",
+    "bench": "vitest run --config vitest.bench.config.ts",
+    "db:migrate:remote": "wrangler d1 execute ihsancenter --remote --yes --file=./migrations/0001_init.sql && wrangler d1 execute ihsancenter --remote --yes --file=./migrations/0002_seed.sql && wrangler d1 execute ihsancenter --remote --yes --file=./migrations/0003_auth_and_idempotency.sql",
+    "deploy:build": "cd ../web && npm run build",
+    "deploy:check": "node ../../scripts/deploy-check.mjs"
+  },
+  "dependencies": {
+    "hono": "^4.6.14",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20241218.0",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8",
+    "wrangler": "^3.99.0"
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "name": "ihsancenter",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:api": "npm run dev --workspace @ihsan/api",
+    "dev:web": "npm run dev --workspace @ihsan/web",
+    "db:migrate:local": "npm run db:migrate:local --workspace @ihsan/api",
+    "db:seed:local": "npm run db:seed:local --workspace @ihsan/api",
+    "db:reset:local": "npm run db:reset:local --workspace @ihsan/api",
+    "dev": "npm run db:reset:local && concurrently -n api,web -c green,cyan \"npm:dev:api\" \"npm:dev:web\"",
+    "test": "npm run test --workspace @ihsan/api",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "deploy:check": "node scripts/deploy-check.mjs",
+    "deploy:build": "npm run build --workspace @ihsan/web",
+    "db:migrate:remote": "npm run db:migrate:remote --workspace @ihsan/api",
+    "smoke": "node scripts/smoke.mjs"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.5.41",
+    "concurrently": "^10.0.6"
+  }
+}

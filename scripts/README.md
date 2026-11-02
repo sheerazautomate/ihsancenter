@@ -31,3 +31,11 @@ companies, opening stock, one opening credit balance and two expenses.
 
 **Never apply 0004 to production** — it would put fake stock and fake customer
 balances into real books. Production runs 0001–0003 only.
+
+Sign in with `manager` / `ihsan12345` on the local dev database.
+
+## Benchmarks
+
+```bash
+npm run bench --workspace @ihsan/api    # PBKDF2 timing in the real Workers runtime
+```

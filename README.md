@@ -10,5 +10,13 @@ Accounts, inventory and credit system for a pesticide retail shop (PKR).
 - [Build notes — verified findings](docs/plan/05-build-notes-verified.md)
 
 ## Code
-- `apps/api` — Hono API on Cloudflare Workers + D1 (schema, ledger, sales, tests)
-- 39 tests passing against real D1: `npm test`
+- `apps/api` — Hono API on Cloudflare Workers + D1 (schema, ledger, sales, auth)
+- `apps/web` — React SPA: billing, invoices, stock, customers
+- 50 tests passing against real D1: `npm test`
+
+## Run it locally
+```bash
+npm install
+npm run dev        # resets local DB, starts API :8787 and web :5173
+```
+Then sign in as `manager` / `ihsan12345`. See `scripts/README.md`.

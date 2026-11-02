@@ -17,6 +17,7 @@ import OpeningPage from './pages/Opening';
 import CompaniesPage from './pages/Companies';
 import SupplierPaymentsPage from './pages/SupplierPayments';
 import LogsPage from './pages/Logs';
+import SaleReturnPage from './pages/SaleReturn';
 
 export interface CurrentUser {
   id: string;
@@ -122,6 +123,7 @@ function Shell({ user }: { user: CurrentUser }) {
           <Route path="/reports" element={<ReportsPage />} />
           <Route path="/invoices" element={<InvoicesPage />} />
           <Route path="/invoices/:id" element={<InvoiceDetailPage />} />
+          <Route path="/invoices/:id/return" element={<SaleReturnPage />} />
           <Route path="/stock" element={<StockPage />} />
           <Route path="/customers" element={<CustomersPage />} />
           <Route path="/companies" element={<CompaniesPage />} />

@@ -1,12 +1,15 @@
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useParams } from 'react-router-dom';
+import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { api, ApiError, type Invoice, type InvoiceLine, type InvoicePayment } from '../lib/api';
 import Receipt from '../components/Receipt';
 
 export default function InvoiceDetailPage() {
   const { id } = useParams<{ id: string }>();
   const queryClient = useQueryClient();
+  const [params] = useSearchParams();
+  // Set by the return screen once goods have been booked back in.
+  const returnedNo = params.get('returned');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -47,11 +50,22 @@ export default function InvoiceDetailPage() {
           Print
         </button>
         {data.invoice.status === 'open' && (
+          <Link className="btn secondary" to={`/invoices/${id}/return`}>
+            Return goods
+          </Link>
+        )}
+        {data.invoice.status === 'open' && (
           <button className="btn danger" disabled={busy} onClick={voidInvoice}>
             {busy ? 'Voiding…' : 'Void invoice'}
           </button>
         )}
       </div>
+
+      {returnedNo && (
+        <div className="alert success no-print" style={{ maxWidth: 420, margin: '0 auto 12px' }}>
+          Returned. Credit note <strong>{returnedNo}</strong> is now in the books and the stock is back.
+        </div>
+      )}
 
       {error && (
         <div className="alert error no-print" style={{ maxWidth: 420, margin: '0 auto 12px' }}>

@@ -694,3 +694,96 @@ below zero, so a run of payments reads monotonically down to zero. `clearedOn` i
 only when the running balance actually reaches it; a part-paid bill reports null, and
 that distinction is tested — showing a cleared date on an open bill would tell the
 farmer he is done when he is not.
+
+## Sales returns
+
+A farmer brings back a bag of urea because it was the wrong grade, or half a drum of
+pesticide because it did not work. Three things have to happen together, and if any
+one of them is missed the books stop matching the shelf: the stock comes back in, the
+sale is reversed, and the farmer is made whole — either with money or by clearing part
+of his udhaar.
+
+`POST /api/sales/returns` posts all three in one unit of work:
+
+    Dr sale_return      total        Cr cash        refundCash
+                                    Cr bank        refundBank
+                                    Cr customer    creditNote
+    Dr inventory        costTotal    Cr cogs        costTotal
+    stock +qty, stock_movements.type = 'sale_return'
+
+**A credit note can never exceed what the customer owes.** This is the rule that keeps
+the ledger honest. If a farmer paid cash for a bag and then returns it, there is no
+udhaar to reduce; crediting his account anyway would leave the shop showing money owed
+to a person who never lent it anything, with no document explaining where it came from.
+So the engine checks the balance and refuses: a cleared account must be refunded, not
+credited. `GET /api/sales/:id/returnable` hands the screen the number it needs to
+respect that — `owedByCustomerPaisa` — alongside each line's `returnable_milli`
+(sold minus everything already returned on earlier returns of the same bill), so the
+counter cannot promise back more than was ever sold.
+
+**The refund must add up exactly.** Cash plus bank plus credit note has to equal the
+return value to the paisa. Anything else is a rounding hole that surfaces months later
+as a balance nobody can explain, so it is refused rather than absorbed.
+
+**The return screen** is reached from the invoice ("Return goods"), because a return
+only means something against a bill. Quantities start empty — a pre-filled "everything"
+gets submitted by accident and puts stock back that never left. The refund split
+defaults to the honest one: credit note up to what he owes, cash for the rest, with a
+tickbox for the case where he already cleared the bill and simply wants his money back.
+Editing either figure re-derives the other, so the total can never drift.
+
+**A return is a dated settlement.** `SR-` credit notes appear in the invoice's payment
+history next to receipts, on their own date, and they move `clearedOn` when they are
+what finishes the bill — because from the farmer's side a returned bag and a handed-over
+note both reduce what he owes by the same amount on the same day. `POST` honours
+`Idempotency-Key`, so a double-tap on a slow connection returns the original `SR-`
+number instead of booking the stock twice.
+
+Cost of goods is reversed at the same average cost the sale used, so a full return
+leaves profit at exactly zero rather than at whatever the price difference happened to
+be that week.
+
+### Three holes that only opened when the real API was driven
+
+The suite passed and the feature was wrong in three places. Each one is now covered
+by a test that fails without the fix.
+
+**A return that named no invoice skipped the cap entirely.** `invoiceId` was optional,
+and the per-line limit lived inside `if (invoice)`. Posting a return without one
+returned 9 bags of a product whose bill had already had 3 come back off a 10-bag line
+— stock that never existed, against a refund bigger than the bill. There is no way to
+cap a return that does not say what it reverses, so `invoiceId` is now required by the
+schema. A farmer who has lost his slip is served by looking the bill up, not by booking
+stock back on trust.
+
+**An idempotency replay reported the wrong amounts.** The collision handler echoed
+*total*, *refundCash* and *creditNote* — the values from the **new** attempt — under the
+**old** return number. A retry that asked for Rs 20,000 got back "SR-2026-00005, Rs
+7,500", or "SR-…, Rs 20,000" describing a document that says Rs 7,500. It now re-reads
+the stored row and returns what the books actually hold.
+
+**Reusing a request key on a different bill silently discarded the return.** The insert
+collided, the handler found the key's existing row on another invoice, and returned
+`ok: true` with that old document — the second return was never written while the
+counter was told it had been. That case is now `409` with a message naming the document
+the key belongs to.
+
+### A refund has to appear on the slip
+
+The first version only listed credit notes in the invoice's payment history. A farmer
+who had paid a bill in full and then returned a bag got **cash** — the balance moved by
+nothing, so the row was filtered out entirely, and the one document meant to settle an
+argument showed the return had never happened. Returns with money going out are now
+part of the history on their own date, carrying `refundPaisa` and the mode `cash
+refund`, with the balance column correctly unchanged. "He gave me Rs 5,600 back on 29
+September" is now printed on the bill.
+
+Reconciled end to end on a live D1 — 10 urea and 4 DAP on udhaar, 3 urea back as a
+credit note, the balance cleared by receipt, 1 DAP back as cash:
+
+    sales       -47,400      inventory  -30,400
+    sale_return +13,100      cogs       +30,400
+    cash        +34,300      SUM          0
+
+Net revenue 34,300 against COGS 30,400 leaves 3,900 of profit — exactly the margin on
+the 7 urea and 3 DAP that stayed sold.

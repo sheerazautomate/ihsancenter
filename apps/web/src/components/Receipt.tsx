@@ -144,8 +144,20 @@ export default function Receipt({
                 <tr key={`${h.document}-${h.date}`}>
                   <td>{h.date}</td>
                   <td>{h.document}</td>
-                  <td style={{ textTransform: 'capitalize' }}>{h.kind === 'credit note' ? 'return' : h.mode}</td>
-                  <td style={{ textAlign: 'right' }}>{formatPkr(h.amountPaisa)}</td>
+                  <td style={{ textTransform: 'capitalize' }}>{h.mode}</td>
+                  <td style={{ textAlign: 'right' }}>
+                    {formatPkr(h.amountPaisa)}
+                    {h.refundPaisa && h.amountPaisa === 0 ? (
+                      <div style={{ fontSize: 10 }} className="muted">
+                        {formatPkr(h.refundPaisa)} refunded
+                      </div>
+                    ) : null}
+                    {h.refundPaisa && h.amountPaisa > 0 ? (
+                      <div style={{ fontSize: 10 }} className="muted">
+                        + {formatPkr(h.refundPaisa)} cash back
+                      </div>
+                    ) : null}
+                  </td>
                   <td style={{ textAlign: 'right' }}>{formatPkr(h.balanceAfterPaisa)}</td>
                 </tr>
               ))}

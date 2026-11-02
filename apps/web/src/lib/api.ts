@@ -164,6 +164,8 @@ export interface InvoicePaymentEntry {
   mode: string;
   amountPaisa: number;
   balanceAfterPaisa: number;
+  /** On a return: money handed back over the counter, which moves the balance by nothing. */
+  refundPaisa?: number;
 }
 
 /** What has been received against an invoice since it was issued. */
@@ -177,6 +179,47 @@ export interface InvoicePayment {
   /** Every payment, oldest first, with the balance it left behind. */
   history: InvoicePaymentEntry[];
   receipts: { receipt_no: string; doc_date: string; mode: string; amount_paisa: number }[];
+}
+
+/** One line of an invoice as far as returning goods is concerned. */
+export interface ReturnableLine {
+  id: string;
+  product_id: string;
+  product_name: string;
+  unit: string;
+  qty_milli: number;
+  rate_paisa: number;
+  discount_paisa: number;
+  /** Already brought back on earlier returns of this invoice. */
+  returned_milli: number;
+  /** The most that can come back now: sold minus already returned. */
+  returnable_milli: number;
+}
+
+/** What the return screen needs before anything is typed. */
+export interface ReturnableInvoice {
+  invoice: {
+    id: string;
+    invoice_no: string;
+    doc_date: string;
+    customer_id: string;
+    customer_name: string;
+    status: string;
+  };
+  canReturn: boolean;
+  /** The cap on a credit note: a return cannot credit more than he owes. */
+  owedByCustomerPaisa: number;
+  lines: ReturnableLine[];
+}
+
+export interface PostedSaleReturn {
+  ok: true;
+  returnNo: string;
+  returnId: string;
+  totalPaisa: number;
+  refundCashPaisa: number;
+  refundBankPaisa: number;
+  creditNotePaisa: number;
 }
 
 export interface PostedSale {

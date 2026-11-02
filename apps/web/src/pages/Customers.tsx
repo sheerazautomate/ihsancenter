@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, type Customer } from '../lib/api';
 import { formatPkr, paisaToInput, parseNumber } from '../lib/money';
+import { downloadReport } from '../lib/export';
 
 interface LedgerEntry {
   entry_date: string;
@@ -62,6 +63,7 @@ export default function CustomersPage() {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [exporting, setExporting] = useState<string | null>(null);
 
   const { data } = useQuery({
     queryKey: ['customers', 'list', q],
@@ -147,6 +149,20 @@ export default function CustomersPage() {
       setError(e instanceof Error ? e.message : 'Could not save the customer');
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function exportCsv(slug: string, label: string) {
+    if (!selected) return;
+    setError(null);
+    setExporting(slug);
+    try {
+      await downloadReport(slug, { customerId: selected.id });
+      setNotice(`${label} downloaded.`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Download failed');
+    } finally {
+      setExporting(null);
     }
   }
 
@@ -382,6 +398,14 @@ export default function CustomersPage() {
               </div>
               <button className="btn secondary sm" onClick={() => startEdit(selected)}>
                 Edit
+              </button>
+              <button
+                className="btn secondary sm"
+                disabled={exporting !== null}
+                onClick={() => exportCsv('customer-history', 'Full history')}
+                title="Download this customer's whole history as Excel"
+              >
+                {exporting === 'customer-history' ? '…' : 'History'}
               </button>
               <button className="btn secondary sm" onClick={() => setSelected(null)}>
                 Close

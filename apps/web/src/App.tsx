@@ -16,6 +16,7 @@ import CustomersPage from './pages/Customers';
 import OpeningPage from './pages/Opening';
 import CompaniesPage from './pages/Companies';
 import SupplierPaymentsPage from './pages/SupplierPayments';
+import LogsPage from './pages/Logs';
 
 export interface CurrentUser {
   id: string;
@@ -87,6 +88,7 @@ function Shell({ user }: { user: CurrentUser }) {
             ['/stock', 'Stock', false],
             ['/expenses', 'Expenses', false],
             ['/reports', 'Reports', false],
+            ['/logs', 'Logs', false],
             ['/opening', 'Opening', false],
             ['/dashboard', 'Dashboard', false],
           ].map(([path, label, end]) => (
@@ -125,6 +127,7 @@ function Shell({ user }: { user: CurrentUser }) {
           <Route path="/companies" element={<CompaniesPage />} />
           <Route path="/payables" element={<SupplierPaymentsPage />} />
           <Route path="/opening" element={<OpeningPage />} />
+          <Route path="/logs" element={<LogsPage />} />
         </Routes>
       </main>
     </div>

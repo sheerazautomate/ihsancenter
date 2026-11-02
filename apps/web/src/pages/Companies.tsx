@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
+import { downloadReport } from '../lib/export';
 
 interface CompanyRow {
   id: string;
@@ -59,6 +60,7 @@ export default function CompaniesPage() {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [exporting, setExporting] = useState<string | null>(null);
 
   const companies = useQuery({
     queryKey: ['companies-all'],
@@ -156,6 +158,20 @@ export default function CompaniesPage() {
       setError(e instanceof Error ? e.message : 'Could not delete the company');
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function exportLog(slug: string, label: string) {
+    if (!selected) return;
+    setError(null);
+    setExporting(slug);
+    try {
+      await downloadReport(slug, { companyId: selected.id });
+      setNotice(`${label} downloaded.`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Download failed');
+    } finally {
+      setExporting(null);
     }
   }
 
@@ -385,7 +401,15 @@ export default function CompaniesPage() {
                 )}
 
                 <div className="row wrap" style={{ marginTop: 12 }}>
-                  <button className="btn secondary" onClick={() => toggleActive(selected)} disabled={busy}>
+                  <button
+                className="btn secondary"
+                disabled={exporting !== null}
+                onClick={() => exportLog('company-history', 'Company history')}
+                title="Download this company's whole history as Excel"
+              >
+                {exporting === 'company-history' ? '…' : 'History'}
+              </button>
+              <button className="btn secondary" onClick={() => toggleActive(selected)} disabled={busy}>
                     {selected.is_active === 1 ? 'Deactivate' : 'Reactivate'}
                   </button>
                   <button

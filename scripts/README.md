@@ -21,7 +21,7 @@ to add accounts later.
 
 ## Layout
 
-- `apps/api` — Hono on Cloudflare Workers, D1. Tests: `npm test` (115 API tests).
+- `apps/api` — Hono on Cloudflare Workers, D1. Tests: `npm test` (129 API tests).
 - `apps/web` — React SPA. 5 unit tests for the API URL helper.
 - `apps/web` — React + Vite SPA, proxying `/api` to the Worker in dev.
 

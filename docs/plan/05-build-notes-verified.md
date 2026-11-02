@@ -606,3 +606,60 @@ Verified live: two credit invoices for the same farmer; clearing the newer one l
 the older untouched and marked the cleared one `settled`; a part payment showed
 `part` with the remainder, and the customer balance reconciled to the rupee
 (12,000 opening + 700 new credit − 550 received = 12,150) with integrity ok.
+
+## Logs and exports: everything, in one click
+
+The ask was "each and every possible log, so my friend can view anything in a single
+click". That shaped three decisions.
+
+**One catalogue drives both ends.** `src/lib/reports-catalog.ts` holds every report as
+{slug, title, description, columns, sql}. `/api/reports/export` serves that list, and
+the Logs page renders itself from it — so a report added on the server appears in the
+UI with no front-end change, and the two cannot drift apart. 23 reports across
+Customers, Companies, Stock, Cash, Expenses and System.
+
+**Amounts are rupees in the file.** Every money column divides by 100 in SQL. A
+spreadsheet is read by humans, and paisa would force the reader to add a `/100` column
+— which is precisely where somebody eventually gets it wrong by a factor of a hundred.
+
+**Voided documents are included, marked as void.** Hiding them would make the export
+lie by omission; the record has to show what was cancelled, not only what survived.
+The app's own totals still exclude them, which is correct — the export is the evidence
+trail, not the balance.
+
+### The format took two attempts
+
+The first version wrote SpreadsheetML 2003 with an `.xls` extension. It opened in
+Excel and my own tests passed, but `xlrd` rejected it, and it is the format Google
+Sheets and phone apps often refuse. The shop said xlsx preferred, and a file that a
+farmer's phone cannot open is not a deliverable.
+
+There is no zlib in the Workers runtime, so a real `.xlsx` needed a ZIP writer.
+`src/lib/zip.ts` writes **stored** (uncompressed) entries — legal ZIP, no compression
+needed, and the resulting workbook is a few hundred kilobytes instead of one hundred.
+`src/lib/xls.ts` then builds genuine Office Open XML: inline strings, a money number
+format, a frozen header row, an autofilter, and a green header band. Verified by
+loading the output with openpyxl — real workbook, 18 sheets, numeric money cells with
+`#,##0.00`, `freeze_panes = A2`.
+
+SpreadsheetML survives as `?format=xls`, and CSV as `?format=csv`. CSV carries a UTF-8
+BOM, without which Excel reads the file as ANSI and every customer name becomes
+mojibake — for this shop, names it can no longer match to anyone.
+
+### Excel's limits, handled
+
+Sheet names are capped at 31 characters and forbid `: \ / ? * [ ]`. A naive slice of
+the title produced sheets called "Cash flow — every rupee in and". The catalogue now
+carries short names, duplicates get a suffix, and illegal characters are replaced.
+Anything over 20,000 rows is truncated and flagged with an `X-Export-Truncated`
+response header rather than silently cut.
+
+### The everything workbook
+
+`/api/reports/export/everything/all` is the single click: a Cover sheet listing every
+sheet and what it answers, one sheet per report, and one sheet per customer and per
+company that has any movement. One broken report does not cost the shop the whole
+export — failures are collected and named on the Cover sheet under INCOMPLETE.
+
+This is also the nearest thing to a backup that exists today. The free plan has none,
+and the workbook is the only artefact that can be handed to another system intact.

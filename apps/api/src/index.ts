@@ -8,6 +8,7 @@ import { purchaseRoutes } from './routes/purchases';
 import { moneyRoutes } from './routes/money';
 import { reportRoutes } from './routes/reports';
 import { openingRoutes } from './routes/opening';
+import { exportRoutes } from './routes/export';
 import type { AppEnv } from './middleware';
 
 interface Env {
@@ -63,6 +64,7 @@ app.route('/api/catalog', catalogRoutes);
 app.route('/api/customers', customerRoutes);
 app.route('/api/purchases', purchaseRoutes);
 app.route('/api/money', moneyRoutes);
+app.route('/api/reports/export', exportRoutes);
 app.route('/api/reports', reportRoutes);
 app.route('/api/opening', openingRoutes);
 

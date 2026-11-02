@@ -112,6 +112,48 @@ try {
   record(false, 'GET /api/auth/me', e.message);
 }
 
+// ---------- 3b. the client's URL shape ----------
+// Every /api/* request goes through one helper in apps/web/src/lib/api.ts that
+// adds the prefix. That helper was once inverted, so the browser called
+// /auth/login instead of /api/auth/login: in production that is a 405 (POST) or
+// index.html (GET), while in `vite dev` it merely 404s and looks harmless.
+// The result was a deployed site where signing in failed and the app believed
+// nobody was logged in. These two probes pin the contract from the outside.
+{
+  const stripped = await fetch(`${root}/api`, { method: 'POST' }).catch(() => null);
+  record(!!stripped, 'API prefix is required by the router', stripped ? `${stripped.status}` : 'no response');
+
+  // An unprefixed POST must NOT reach the API. 405 (asset handler) or 404 (Hono)
+  // are both proof that /auth/login is not the API.
+  try {
+    const res = await fetch(`${root}/auth/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ username: 'probe', password: 'probe' }),
+    });
+    const text = (await res.text()).slice(0, 120);
+    const looksLikeApi = res.status === 200 || res.status === 401 || /"error":\s*"Username and password/.test(text);
+    record(!looksLikeApi, 'unprefixed /auth/login is not the API', `${res.status}`);
+    if (looksLikeApi) {
+      console.log('        The SPA is calling the API without the /api prefix — check apiUrl() in');
+      console.log('        apps/web/src/lib/api.ts, then rebuild and redeploy.');
+    }
+  } catch (e) {
+    record(false, 'unprefixed /auth/login is not the API', e.message);
+  }
+
+  // And an unprefixed GET must not come back as the HTML app, which is what a
+  // broken client then parses as an empty JSON body ("not signed in").
+  try {
+    const res = await fetch(`${root}/auth/me`, { headers: { accept: 'text/html' } });
+    const type = res.headers.get('content-type') ?? '';
+    const isJson = type.includes('application/json');
+    record(!isJson, 'unprefixed /auth/me is not JSON', isJson ? 'returned JSON' : type || 'no content-type');
+  } catch (e) {
+    record(false, 'unprefixed /auth/me', e.message);
+  }
+}
+
 // ---------- 4. signed-in reads ----------
 if (user && password) {
   const login = await fetch(`${root}/api/auth/login`, {

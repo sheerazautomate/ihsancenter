@@ -19,6 +19,31 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * Resolve a client path to a URL on the API.
+ *
+ * Callers pass bare paths (`/auth/login`, `/catalog/stock`) because the API is
+ * same-origin in every environment: Vite proxies `/api` in dev, and the Worker
+ * serves the built SPA itself in production. The prefix is therefore added here,
+ * in one place.
+ *
+ * A previous version read `path.startsWith('/') ? path : '/api' + path`, which
+ * meant the prefix was never applied -- every caller starts with a slash. That
+ * shipped silently because in dev a request to `/auth/login` simply 404s against
+ * the Vite server, while in production it reaches the static-asset handler and
+ * comes back as a 405 (POST) or as index.html (GET), which the app then read as
+ * "not signed in". One function, one rule, and `absoluteUrl()` below keeps
+ * genuinely external URLs working.
+ */
+export function apiUrl(path: string): string {
+  if (/^https?:\/\//i.test(path)) return path;
+  // Already an API path (`/api` or `/api/...`)? Leave it alone rather than
+  // producing /api/api. Note this is anchored, so /catalog/apiary still gets the
+  // prefix.
+  if (/^\/api(\/|$)/.test(path)) return path;
+  return `/api${path.startsWith('/') ? path : `/${path}`}`;
+}
+
 export async function api<T>(
   path: string,
   options: RequestInit & { idempotencyKey?: string } = {},
@@ -27,17 +52,35 @@ export async function api<T>(
   if (options.body) headers.set('Content-Type', 'application/json');
   if (options.idempotencyKey) headers.set('Idempotency-Key', options.idempotencyKey);
 
-  const res = await fetch(path.startsWith('/') ? path : `/api${path}`, {
+  const res = await fetch(apiUrl(path), {
     ...options,
     headers,
     credentials: 'include',
   });
 
   const text = await res.text();
-  const body = text ? JSON.parse(text) : {};
+  let body: Record<string, unknown> = {};
+  try {
+    body = text ? JSON.parse(text) : {};
+  } catch {
+    // The API only ever returns JSON. Anything else means the request reached the
+    // static-asset handler instead -- in a single-origin deploy, a missing /api
+    // prefix gets index.html back with a 200, and the failure then looks like a
+    // signed-out user rather than a wrong URL. Say what actually happened.
+    throw new ApiError(
+      `Expected JSON from ${apiUrl(path)} but got ${res.status} ${
+        res.headers.get('content-type') ?? 'no content-type'
+      }. This usually means the request missed the API prefix.`,
+      res.status,
+    );
+  }
 
   if (!res.ok) {
-    throw new ApiError(body.error ?? `Request failed (${res.status})`, res.status, body.code);
+    throw new ApiError(
+      (body.error as string) ?? `Request failed (${res.status})`,
+      res.status,
+      body.code as string | undefined,
+    );
   }
   return body as T;
 }

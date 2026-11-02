@@ -149,6 +149,7 @@ successfully and then break in the browser:
 | `database_id` still a placeholder | deploys a Worker bound to nothing; every query fails |
 | `SESSION_SECRET` written in the toml | leaks the key into git; must be a `wrangler secret` |
 | demo SQL inside `migrations/` | fake customers and stock become real rows |
+| D1 binding renamed away from `DB` | deploys fine, then every query is a generic 500 |
 | `not_found_handling` not SPA | every hard refresh on `/reports`, `/opening` returns 404 |
 
 It exits non-zero, so it can gate a CI deploy later without changes.
@@ -188,9 +189,11 @@ node scripts/smoke.mjs https://ihsancenter-api.<your-subdomain>.workers.dev \
 ```
 
 It checks, in order: the API answers; the app is served; **hard refresh** works on
-`/reports`, `/opening` and `/invoices`; the API is guarded; the database responds; a
-real login succeeds; the session cookie survives a round trip; the main screens load;
-and the books balance. Each failure prints the specific cause, so a 500 on login
+`/reports`, `/opening` and `/invoices`; the API is guarded; the **API prefix** is
+required (an unprefixed `/auth/login` must not reach the API — in a single-origin deploy
+it returns 405, and a client that forgets `/api` fails exactly this way); the database
+responds; a real login succeeds; the session cookie survives a round trip; the main
+screens load; and the books balance. Each failure prints the specific cause, so a 500 on login
 tells you it is `SESSION_SECRET` rather than making you guess.
 
 Use a real password for the bootstrap call — this is not the `ihsan12345` demo

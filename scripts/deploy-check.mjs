@@ -71,6 +71,50 @@ if (!existsSync(tomlPath)) {
     fail('No [assets] block: the SPA would not be served, and /api cookies would be cross-site.');
   }
 
+  // The D1 binding NAME must match what the code reads. A rename here (binding
+  // = "ihsancenter" instead of "DB") deploys cleanly, prints the binding in the
+  // output, and then every route throws "Cannot read properties of undefined
+  // (reading 'prepare')" -- which the error handler reports as a generic 500.
+  // Migrations still work, because they address the database by NAME, so the
+  // failure only appears on the first request that touches D1.
+  const bindings = [...toml.matchAll(/^\s*\[\[d1_databases\]\][^[]*/gm)].map((m) => {
+    const b = m[0].match(/binding\s*=\s*"([^"]*)"/);
+    return b ? b[1] : null;
+  });
+  if (bindings.length === 0) {
+    fail('No [[d1_databases]] block found in wrangler.toml.');
+  } else {
+    // What does the source actually reference?
+    const srcFiles = listFiles(join(apiDir, 'src')).filter((f) => /\.(ts|tsx)$/.test(f));
+    const used = new Set();
+    for (const f of srcFiles) {
+      const body = readFileSync(f, 'utf8');
+      for (const m of body.matchAll(/\benv\.([A-Z][A-Z0-9_]*)\b/g)) used.add(m[1]);
+    }
+    const expected = 'DB';
+    if (bindings.some((b) => b === expected)) {
+      pass(`D1 binding is "${expected}", matching the code`);
+    } else {
+      const found = bindings.filter(Boolean).join(', ') || '(none)';
+      fail(
+        `D1 binding is "${found}" but the code reads c.env.${expected} (used in ${srcFiles.length} files). ` +
+          `Set binding = "${expected}" in wrangler.toml — otherwise every query throws ` +
+          '"Cannot read properties of undefined (reading \'prepare\')" as a generic 500.',
+      );
+    }
+    // Any other env.X the code relies on but the toml never declares is likely a
+    // typo in one or the other.
+    const declared = new Set([...toml.matchAll(/^\s*binding\s*=\s*"([^"]*)"/gm)].map((m) => m[1]));
+    const known = new Set(['DB', 'ASSETS', 'SESSION_SECRET', 'ENVIRONMENT', 'ALLOWED_ORIGINS']);
+    for (const name of used) {
+      if (!known.has(name)) continue;
+      if (name === 'SESSION_SECRET') continue; // a secret, never in the toml
+      if (!declared.has(name) && name !== 'ENVIRONMENT' && name !== 'ALLOWED_ORIGINS') {
+        warn(`code reads c.env.${name} but wrangler.toml declares no such binding`);
+      }
+    }
+  }
+
   // Secrets must never be in the committed toml.
   if (/SESSION_SECRET\s*=/.test(toml)) {
     fail(

@@ -314,3 +314,44 @@ The general point: **a deployment is not done when the upload succeeds.** Each o
 these was invisible until something ran against the deployed shape, which is why
 `scripts/deploy-check.mjs` and `scripts/smoke.mjs` exist and why both were tested by
 deliberately breaking the config and watching them fail.
+
+---
+
+## Deploying found what tests could not — three bugs in a row
+
+The first real deployment produced three failures that the 77-test suite, `tsc`, and
+`vite build` all passed straight over. None of them is an API bug: they live in the
+seam between the code, the config, and the runtime, which is exactly the seam nothing
+exercised.
+
+**1. A renamed D1 binding.** `wrangler.toml` had `binding = "ihsancenter"` while every
+route reads `c.env.DB`. The deploy succeeded and proudly printed the binding, but
+`c.env.DB` was `undefined`, so the first query threw
+`TypeError: Cannot read properties of undefined (reading 'prepare')`, which the error
+handler reports as a generic 500. Migrations kept working because they address the
+database by *name*, so the database looked fine right up until something queried it.
+`deploy:check` now compares the toml binding against `c.env.*` in `src/` and refuses to
+pass.
+
+**2. `apiUrl()` was inverted.** The client helper read
+`path.startsWith('/') ? path : '/api' + path`, and every caller passes `'/auth/login'`.
+The prefix was therefore never added. In `vite dev` that request merely 404s against the
+dev server, so nobody saw it; in production it hit the static-asset handler and came back
+as **405** for a POST and **index.html with a 200** for a GET — which the app parsed as an
+empty body and treated as "not signed in". Result: a site that loaded, looked fine, and
+could not log in.
+
+The lesson is about where that bug lived, not how long it was. It was not untested through
+carelessness: it is *unreachable* in development because the dev server has no assets
+handler to collide with. It only exists in the single-origin production shape. There is
+now a 5-case unit test for `apiUrl`, a JSON parse guard that names the problem instead of
+silently returning `{}`, and three smoke probes that assert the unprefixed path does *not*
+reach the API.
+
+**3. Nothing checked the seam after deploying.** Both of the above were visible in one
+line of `wrangler tail` and would have been caught automatically by a post-deploy request
+to `/api/auth/me` plus one to `/auth/me`. That is now `scripts/smoke.mjs`, which is worth
+running on every deploy rather than only when something is already broken.
+
+**Rule worth keeping:** a passing test suite says the logic is right. It says nothing
+about whether the URL, the binding name, or the asset handler agree with it.

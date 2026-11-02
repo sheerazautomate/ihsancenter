@@ -7,6 +7,7 @@ import { customerRoutes } from './routes/customers';
 import { purchaseRoutes } from './routes/purchases';
 import { moneyRoutes } from './routes/money';
 import { reportRoutes } from './routes/reports';
+import { openingRoutes } from './routes/opening';
 import type { AppEnv } from './middleware';
 
 interface Env {
@@ -63,6 +64,7 @@ app.route('/api/customers', customerRoutes);
 app.route('/api/purchases', purchaseRoutes);
 app.route('/api/money', moneyRoutes);
 app.route('/api/reports', reportRoutes);
+app.route('/api/opening', openingRoutes);
 
 /**
  * Unmatched requests. When the Worker serves the SPA, Cloudflare's static asset

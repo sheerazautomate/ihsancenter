@@ -123,6 +123,25 @@ export function stockGuard(args: {
   };
 }
 
+/**
+ * A guard for any custom invariant: `violatedWhenSql` must return rows only when
+ * the rule is broken. Used for "this may only happen once" checks (opening
+ * balances), where the condition is a query rather than a threshold.
+ */
+export function customGuard(args: {
+  code: GuardCode | string;
+  violatedWhenSql: string;
+  params: unknown[];
+  message: string;
+}): GuardSpec {
+  return {
+    code: args.code as GuardCode,
+    violatedWhenSql: args.violatedWhenSql,
+    params: args.params,
+    message: args.message,
+  };
+}
+
 /** The statements that make up a guarded write, in one batch. */
 export function withGuards(
   db: D1Database,

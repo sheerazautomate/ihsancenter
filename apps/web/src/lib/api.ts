@@ -210,3 +210,47 @@ export interface UnpaidInvoice {
   credit_paisa: number;
   bal: number;
 }
+
+// ---------- opening balances ----------
+
+export interface OpeningState {
+  posted: boolean;
+  firstOpeningDate: string | null;
+  customers: { id: string; name: string; phone: string | null; amountPaisa: number }[];
+  suppliers: { id: string; name: string; amountPaisa: number }[];
+  cash: { id: string; name: string; type: string; amountPaisa: number }[];
+  stock: {
+    id: string;
+    name: string;
+    companyName: string;
+    qtyMilli: number;
+    unitCostPaisa: number;
+  }[];
+  totals: {
+    receivablePaisa: number;
+    payablePaisa: number;
+    cashPaisa: number;
+    inventoryPaisa: number;
+  };
+}
+
+export interface OpeningInput {
+  docDate: string;
+  customers?: { customerId: string; amount: number }[];
+  suppliers?: { companyId: string; amount: number }[];
+  cash?: { cashAccountId: string; amount: number }[];
+  stock?: { productId: string; qty: number; unitCost: number }[];
+  notes?: string;
+}
+
+export interface OpeningResult {
+  ok: true;
+  posted: { customers: number; suppliers: number; cash: number; stock: number };
+  totals: {
+    receivablePaisa: number;
+    cashPaisa: number;
+    inventoryPaisa: number;
+    payablePaisa: number;
+    capitalPaisa: number;
+  };
+}

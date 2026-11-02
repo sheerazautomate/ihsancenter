@@ -13,6 +13,7 @@ import InvoicesPage from './pages/Invoices';
 import InvoiceDetailPage from './pages/InvoiceDetail';
 import StockPage from './pages/Stock';
 import CustomersPage from './pages/Customers';
+import OpeningPage from './pages/Opening';
 
 export interface CurrentUser {
   id: string;
@@ -81,6 +82,7 @@ function Shell({ user }: { user: CurrentUser }) {
             ['/stock', 'Stock', false],
             ['/expenses', 'Expenses', false],
             ['/reports', 'Reports', false],
+            ['/opening', 'Opening', false],
             ['/dashboard', 'Dashboard', false],
           ].map(([path, label, end]) => (
             <NavLink
@@ -115,6 +117,7 @@ function Shell({ user }: { user: CurrentUser }) {
           <Route path="/invoices/:id" element={<InvoiceDetailPage />} />
           <Route path="/stock" element={<StockPage />} />
           <Route path="/customers" element={<CustomersPage />} />
+          <Route path="/opening" element={<OpeningPage />} />
         </Routes>
       </main>
     </div>

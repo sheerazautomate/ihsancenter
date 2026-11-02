@@ -228,8 +228,8 @@ apps/api/
 
 - **Sale returns have no route yet.** The table, ledger shape and idempotency key
   exist; only the UI and endpoint are missing.
-- **No opening-balance entry screen.** Opening balances currently have to be posted
-  directly, which is why the demo seed does it in SQL. Needed before go-live.
+- ~~No opening-balance entry screen.~~ **Done** — `/opening`, backed by
+  `lib/opening.ts`. See "Changed the design #5" below.
 - **No backup job yet.** The nightly `d1 export` + GitHub/R2 copy described in
   `02-architecture.md` is not written. This is the one piece of the plan that must
   exist before real money goes in.
@@ -237,3 +237,41 @@ apps/api/
   two simultaneous sales of the last unit will race; one will be correctly rejected
   by the guard. Correct, but the loser sees an ugly error. Acceptable for one
   counter; revisit if a second till is added.
+
+---
+
+## Changed the design #5 — the guard has to run *before* the write
+
+Opening balances needed a rule with no threshold behind it: *this account may be
+opened once, ever.* Any later posting is a correction, not an opening, and must go
+through an adjustment instead.
+
+The obvious implementation reused the existing `tx_guard` trick — put a `SELECT`
+that yields a row when the rule is broken at the *end* of the batch, so the CHECK
+fires and the whole batch rolls back. That is what the negative-stock guard does,
+and it works there because the write and the check look at different things.
+
+Here they look at the same thing. `ledger_entries` already contains the rows the
+batch just inserted, so the guard found its own work, fired, and rejected a clean
+first submission with `opening_already_posted`. Confusingly, it only failed when
+money rows were present — a stock-only posting looked fine.
+
+The fix is one line of ordering: guards go **first** in the batch. D1 runs batch
+statements in order, so the guard sees the pre-batch state and the inserts follow.
+A rejected attempt now also writes nothing at all, which is the property you
+actually want.
+
+**Lesson:** a guard must be evaluated against the state *before* the write it is
+guarding. Appending a check to a batch is only safe when the check does not read
+the rows the batch is about to create.
+
+### Two smaller things this screen taught us
+
+- **Equity is assets minus liabilities.** The first version of the capital figure
+  flipped the sign, and the test that "looked wrong" was in fact the code being
+  wrong in the opposite direction. If `assets - liabilities` is negative the shop
+  owed more than it owned on day one; that is a debit balance in the capital
+  account, and it is a real and reportable situation, not an error to hide.
+- **A rule that lives only on the server reads as a mystery in the UI.** The screen
+  locks rows that already carry an opening and shows the posted figure as text, so
+  the manager never types an amount into a field that will be rejected.

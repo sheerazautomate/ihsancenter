@@ -176,3 +176,52 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
   .topbar .tabs { order: 3; width: 100%; overflow-x: auto; }
   .content { padding: 12px; }
 }
+
+/* ---------- opening balances ---------- */
+
+.opening-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  align-items: start;
+}
+
+@media (max-width: 900px) {
+  .opening-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.opening-grid > div > .card + .card {
+  margin-top: 16px;
+}
+
+/* A figure that is already posted cannot be edited; show it as plain text. */
+.table tr.locked td {
+  background: var(--slate-50, #f8fafc);
+  color: var(--slate-500);
+}
+
+.opening .table input.input {
+  max-width: 130px;
+  text-align: right;
+  padding: 6px 8px;
+}
+
+.opening-summary {
+  max-width: 560px;
+  margin-left: auto;
+}
+
+.opening-summary tr.total td {
+  border-top: 2px solid var(--slate-300, #cbd5e1);
+  padding-top: 10px;
+}
+
+.opening-summary .btn {
+  margin-top: 14px;
+}
+
+.opening-summary .alert {
+  margin: 12px 0 0;
+}

@@ -12,8 +12,19 @@ Accounts, inventory and credit system for a pesticide retail shop (PKR).
 
 ## Code
 - `apps/api` — Hono API on Cloudflare Workers + D1 (schema, ledger, sales, auth)
-- `apps/web` — React SPA: billing, invoices, purchases, udhaar, stock, expenses, reports, dashboard
-- 66 tests passing against real D1: `npm test`
+- `apps/web` — React SPA: billing, invoices, purchases, udhaar, stock, expenses, reports, opening balances, dashboard
+- 77 tests passing against real D1: `npm test`
+
+## First run on a fresh database
+
+`npm run dev` gives you demo data, but a real shop starts here:
+
+1. Sign in, add the products and customers you sell to.
+2. Open **Opening** and enter what already exists — customers' khata balances,
+   what each company is owed, cash in the drawer and bank, and stock on the shelf.
+   The screen shows the resulting owner's capital before you post it.
+3. From then on, use sales, purchases and receipts. Each account can be opened
+   only once; anything entered there is locked.
 
 ## Run it locally
 ```bash

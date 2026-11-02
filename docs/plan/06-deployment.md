@@ -104,7 +104,8 @@ npx wrangler d1 execute ihsancenter --remote \
   --command "SELECT COUNT(*) AS tables FROM sqlite_master WHERE type='table'"
 ```
 
-You should see 20+. If the count is 0 or 1, step 2 didn't run against `--remote`.
+You should see **26** tables. If it is 0, step 2 never
+ran against `--remote`. Measured on a freshly migrated database, not estimated.
 
 ---
 

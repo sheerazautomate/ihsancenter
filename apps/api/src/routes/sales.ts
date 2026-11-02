@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { postSale, voidSale } from '../lib/sales';
+import { postSaleReturn } from '../lib/sale-returns';
 import { IDEMPOTENCY_HEADER } from '../lib/idempotency';
 import { businessDate } from '../lib/numbering';
 import { creditPanelParams, creditPanelSql, toCreditPanel, INVOICE_BALANCE_SQL } from '../lib/ledger';
@@ -202,13 +203,20 @@ salesRoutes.get('/:id', async (c) => {
 
   // Credit notes from sale returns also settle a bill and carry their own date.
   const creditNotes = await c.env.DB.prepare(
-    `SELECT return_no, doc_date, credit_note_paisa AS amount_paisa
+    `SELECT return_no, doc_date, credit_note_paisa AS amount_paisa,
+            refund_cash_paisa + refund_bank_paisa AS refund_paisa
      FROM sale_returns
-     WHERE invoice_id = ? AND status = 'open' AND credit_note_paisa > 0
+     WHERE invoice_id = ? AND status = 'open'
+       AND (credit_note_paisa > 0 OR refund_cash_paisa > 0 OR refund_bank_paisa > 0)
      ORDER BY doc_date ASC, created_at ASC`,
   )
     .bind(c.req.param('id'))
-    .all<{ return_no: string; doc_date: string; amount_paisa: number }>();
+    .all<{
+      return_no: string;
+      doc_date: string;
+      amount_paisa: number;
+      refund_paisa: number;
+    }>();
 
   type HistoryRow = {
     date: string;
@@ -217,6 +225,8 @@ salesRoutes.get('/:id', async (c) => {
     mode: string;
     amountPaisa: number;
     balanceAfterPaisa: number;
+    /** Money handed back over the counter -- moves the balance by nothing. */
+    refundPaisa?: number;
   };
 
   const merged: Omit<HistoryRow, 'balanceAfterPaisa'>[] = [
@@ -231,8 +241,15 @@ salesRoutes.get('/:id', async (c) => {
       date: r.doc_date,
       document: r.return_no,
       kind: 'credit note' as const,
-      mode: 'return',
+      // What the farmer did: he got money back, he got his udhaar cut, or both.
+      mode:
+        r.amount_paisa === 0
+          ? 'cash refund'
+          : r.refund_paisa > 0
+            ? 'return, cash back'
+            : 'return',
       amountPaisa: r.amount_paisa,
+      ...(r.refund_paisa > 0 ? { refundPaisa: r.refund_paisa } : {}),
     })),
   ].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
 
@@ -270,6 +287,128 @@ salesRoutes.get('/:id', async (c) => {
     .all();
 
   return c.json({ invoice, lines: lines.results, payment });
+});
+
+/**
+ * What can still be returned from an invoice.
+ *
+ * The screen needs three numbers before the manager types anything: what is left
+ * on each line after earlier returns, how much the customer still owes (the most
+ * that can go to a credit note), and the refund-vs-credit split that would follow.
+ */
+salesRoutes.get('/:id/returnable', async (c) => {
+  const invoiceId = c.req.param('id');
+
+  const invoice = await c.env.DB.prepare(
+    `SELECT i.id, i.invoice_no, i.doc_date, i.customer_id, i.status, c.name AS customer_name
+     FROM sales_invoices i JOIN customers c ON c.id = i.customer_id
+     WHERE i.id = ?`,
+  )
+    .bind(invoiceId)
+    .first<{
+      id: string;
+      invoice_no: string;
+      doc_date: string;
+      customer_id: string;
+      status: string;
+      customer_name: string;
+    }>();
+  if (!invoice) return c.json({ error: 'Invoice not found' }, 404);
+
+  const lines = await c.env.DB.prepare(
+    `SELECT l.id, l.product_id, p.name AS product_name, p.unit,
+            ${'l.qty_milli'} AS qty_milli, l.rate_paisa, l.discount_paisa,
+            COALESCE((SELECT SUM(rl.qty_milli) FROM sale_return_lines rl
+                        JOIN sale_returns r ON r.id = rl.return_id
+                       WHERE r.invoice_id = l.invoice_id AND r.status = 'open'
+                         AND rl.product_id = l.product_id), 0) AS returned_milli
+     FROM sales_invoice_lines l JOIN products p ON p.id = l.product_id
+     WHERE l.invoice_id = ?
+     ORDER BY l.sort_order`,
+  )
+    .bind(invoiceId)
+    .all<{ qty_milli: number; returned_milli: number }>();
+
+  const balance = await c.env.DB.prepare(
+    `SELECT COALESCE(SUM(debit_paisa - credit_paisa), 0) AS owedPaisa
+     FROM ledger_entries WHERE account_type = 'customer' AND account_id = ?`,
+  )
+    .bind(invoice.customer_id)
+    .first<{ owedPaisa: number }>();
+
+  return c.json({
+    invoice,
+    // A voided invoice cannot be returned against -- there is nothing left to undo.
+    canReturn: invoice.status === 'open',
+    owedByCustomerPaisa: Math.max(0, balance?.owedPaisa ?? 0),
+    lines: (lines.results ?? []).map((l) => ({
+      ...l,
+      returnable_milli: Math.max(0, l.qty_milli - l.returned_milli),
+    })),
+  });
+});
+
+/** Goods coming back from a customer. */
+const saleReturnLineSchema = z.object({
+  productId: z.string().min(1),
+  qty: z.number().positive().max(1_000_000),
+  rate: z.number().min(0).max(100_000_000),
+  discount: z.number().min(0).max(100_000_000).optional(),
+});
+
+salesRoutes.post('/returns', async (c) => {
+  const parsed = z
+    .object({
+      customerId: z.string().min(1),
+      invoiceId: z.string().min(1),
+      docDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+      lines: z.array(saleReturnLineSchema).min(1).max(100),
+      refundCash: z.number().min(0).optional(),
+      refundBank: z.number().min(0).optional(),
+      creditNote: z.number().min(0).optional(),
+      cashAccountId: z.string().optional(),
+      bankAccountId: z.string().optional(),
+      reason: z.string().min(3).max(300),
+    })
+    .safeParse(await c.req.json().catch(() => null));
+
+  if (!parsed.success) {
+    return c.json(
+      {
+        error: 'Invalid sale return',
+        details: parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`),
+      },
+      400,
+    );
+  }
+  const b = parsed.data;
+
+  const result = await postSaleReturn(c.env.DB, {
+    docDate: b.docDate ?? businessDate(),
+    customerId: b.customerId,
+    invoiceId: b.invoiceId,
+    lines: b.lines.map((l) => ({
+      productId: l.productId,
+      qtyMilli: Math.round(l.qty * 1000),
+      ratePaisa: toPaisa(l.rate)!,
+      discountPaisa: l.discount !== undefined ? toPaisa(l.discount) : undefined,
+    })),
+    refundCashPaisa: b.refundCash !== undefined ? toPaisa(b.refundCash) : undefined,
+    refundBankPaisa: b.refundBank !== undefined ? toPaisa(b.refundBank) : undefined,
+    creditNotePaisa: b.creditNote !== undefined ? toPaisa(b.creditNote) : undefined,
+    cashAccountId: b.cashAccountId,
+    bankAccountId: b.bankAccountId,
+    reason: b.reason,
+    userId: c.get('user').id,
+    idempotencyKey: c.req.header(IDEMPOTENCY_HEADER) ?? undefined,
+  });
+
+  if (!result.ok) {
+    // 409 when a request key is already spent: nothing is wrong with the input,
+    // the caller just has to ask again with a fresh one.
+    return c.json({ error: result.error }, result.conflict ? 409 : 400);
+  }
+  return c.json(result, 201);
 });
 
 /** The credit panel the billing screen shows before the manager commits. */

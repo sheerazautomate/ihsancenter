@@ -428,3 +428,54 @@ schema's CHECK constraint did not allow it (`farmer`, `dealer`, `walkin` only), 
 every save would have failed at the database. Caught by reading the constraint instead
 of trusting the form. The type list in the UI now mirrors the constraint, with a
 comment saying so, because the next person to add an option will hit the same wall.
+
+## Companies: the delete rule the shop asked for was not enough
+
+The request was "a company with data can only be deleted when its book check is 0,
+otherwise give error". That rule is necessary but not sufficient, and shipping it
+alone would have corrupted the catalogue on the first attempt.
+
+Measured on the demo dataset: **all four seeded suppliers had a zero balance**, and
+all four owned products (2, 2, 3 and 2 respectively). A balance-only rule would have
+offered "Delete" on every one of them. The delete would then have either failed on a
+foreign key or orphaned the products that still pointed at the vanished company.
+Four tables reference `companies(id)` — `products`, `purchases`, `purchase_returns`,
+`supplier_payments` — plus the supplier and inventory ledger rows.
+
+So deletion is gated on a dependency audit, in this order, and the message names the
+blocker that stopped it:
+
+1. non-zero balance — **and which way it runs**: "you still owe them Rs X" or
+   "they owe you Rs X". The two are opposite problems; a single "owes money" message
+   would send a shopkeeper to pay a debt that does not exist.
+2. products belong to it
+3. purchases or purchase returns exist
+4. payments were made to it
+5. ledger entries reference it
+
+Everything short of that is reachable through **deactivate** instead: the company
+leaves the purchase and payment dropdowns, and no history is touched. The screen shows
+"Delete" disabled with the reason already on screen, rather than letting the manager
+click and be refused.
+
+`DELETE /api/catalog/companies/:id` returns 409 with `code: 'company_in_use'` and the
+full usage block, so a client can explain itself without a second request.
+
+### Two bugs the screen had on its first draft
+
+- **Editing a company blanked its address and notes.** The edit form is filled from the
+  list endpoint, which selected only `id, name, contact_person, phone, is_active`. The
+  form therefore opened with empty address/notes, and saving wrote `null` over real
+  values. A save that looks successful and silently deletes data. The list now selects
+  every editable column, and a test asserts the values survive a round trip.
+- **The blocker read "Cannot delete this company: You still owe 50000 paisa."** Raw
+  paisa, to a shopkeeper. Now `formatPkr` renders it the same way the rest of the app
+  does ("Rs 500.00"), and the sentence is lower-cased where it is spliced mid-sentence.
+
+### One test-suite trap worth remembering
+
+`vitest-pool-workers` refused to start with `mock-agent.cjs ... does not provide an
+export named 'default'`. That is not a test failure: a stray `npm install` had hoisted
+`workerd@1.20250718.0` over the version the pool pins. `npm ci` from the committed
+lockfile restored it. When that error appears, reinstall from the lock before touching
+any test or config.

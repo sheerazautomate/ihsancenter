@@ -3,17 +3,233 @@ import { z } from 'zod';
 import { requireAuth, type AppEnv } from '../middleware';
 import { newId } from '../lib/ids';
 import { toPaisa } from '../lib/parse';
+import { formatPkr } from '../lib/money';
 
 export const catalogRoutes = new Hono<AppEnv>();
 
 catalogRoutes.use('*', requireAuth);
 
+/**
+ * Companies. Active only by default, because every other screen (purchases,
+ * payments, product form) wants only the companies it can still trade with.
+ * `?all=1` includes deactivated ones for the management screen, where they must
+ * remain visible in order to be reactivated.
+ */
 catalogRoutes.get('/companies', async (c) => {
+  const all = c.req.query('all') === '1';
   const rows = await c.env.DB.prepare(
-    `SELECT id, name, contact_person, phone, is_active FROM companies
-     WHERE is_active = 1 ORDER BY name`,
-  ).all();
+    // address and notes are included because the edit form is filled from this
+    // list; omitting them would let "save" write blanks over real values.
+    `SELECT id, name, contact_person, phone, address, notes, is_active FROM companies
+     WHERE (? = 1 OR is_active = 1) ORDER BY name`,
+  )
+    .bind(all ? 1 : 0)
+    .all();
   return c.json({ companies: rows.results });
+});
+
+/**
+ * One company's detail: what it is, and what would stop it being deleted.
+ *
+ * The manager needs the delete answer BEFORE deciding, not as an error after
+ * clicking. `usage` is the audit behind that answer.
+ */
+catalogRoutes.get('/companies/:id', async (c) => {
+  const id = c.req.param('id');
+  const company = await c.env.DB.prepare(
+    `SELECT id, name, contact_person, phone, address, notes, is_active, created_at
+     FROM companies WHERE id = ?`,
+  )
+    .bind(id)
+    .first();
+  if (!company) return c.json({ error: 'Company not found' }, 404);
+
+  return c.json({ company, usage: await companyUsage(c.env.DB, id) });
+});
+
+/** What a company owns, and whether it is safe to remove. */
+async function companyUsage(db: D1Database, id: string) {
+  const row = await db
+    .prepare(
+      `SELECT
+         (SELECT COUNT(*) FROM products          WHERE company_id = ?) AS products,
+         (SELECT COUNT(*) FROM purchases         WHERE company_id = ?) AS purchases,
+         (SELECT COUNT(*) FROM purchase_returns  WHERE company_id = ?) AS purchaseReturns,
+         (SELECT COUNT(*) FROM supplier_payments WHERE company_id = ?) AS payments,
+         (SELECT
+            (SELECT COUNT(*) FROM ledger_entries WHERE account_type = 'supplier' AND account_id = ?)
+          + (SELECT COUNT(*) FROM ledger_entries WHERE account_type = 'inventory' AND doc_id IN
+               (SELECT id FROM purchases WHERE company_id = ?))
+         ) AS ledgerEntries,
+         COALESCE((SELECT SUM(credit_paisa - debit_paisa) FROM ledger_entries
+                    WHERE account_type = 'supplier' AND account_id = ?), 0) AS balancePaisa`,
+    )
+    .bind(id, id, id, id, id, id, id)
+    .first<{
+      products: number;
+      purchases: number;
+      purchaseReturns: number;
+      payments: number;
+      ledgerEntries: number;
+      balancePaisa: number;
+    }>();
+
+  const u = row ?? {
+    products: 0,
+    purchases: 0,
+    purchaseReturns: 0,
+    payments: 0,
+    ledgerEntries: 0,
+    balancePaisa: 0,
+  };
+
+  // A balance of zero is NOT enough. A company can be fully paid off and still
+  // own a catalogue and an invoice history; deleting it would either fail on a
+  // foreign key or silently orphan the products that reference it.
+  let blockedBy: string | null = null;
+  if (u.balancePaisa !== 0) {
+    blockedBy =
+      u.balancePaisa > 0
+        ? `you still owe them ${formatPkr(u.balancePaisa)}`
+        : `they owe you ${formatPkr(-u.balancePaisa)}`;
+  } else if (u.products > 0) {
+    blockedBy = `${u.products} product(s) still belong to it`;
+  } else if (u.purchases + u.purchaseReturns > 0) {
+    blockedBy = `it has ${u.purchases + u.purchaseReturns} purchase document(s) — history would be lost`;
+  } else if (u.payments > 0) {
+    blockedBy = `${u.payments} payment(s) were made to it`;
+  } else if (u.ledgerEntries > 0) {
+    blockedBy = 'the ledger has entries against it';
+  }
+
+  return {
+    ...u,
+    canDelete: blockedBy === null,
+    canDeactivate: true,
+    blockedBy,
+  };
+}
+
+const companySchema = z.object({
+  name: z.string().min(1).max(120),
+  contactPerson: z.string().max(120).nullable().optional(),
+  phone: z.string().max(30).nullable().optional(),
+  address: z.string().max(300).nullable().optional(),
+  notes: z.string().max(500).nullable().optional(),
+});
+
+catalogRoutes.post('/companies', async (c) => {
+  const parsed = companySchema.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) {
+    return c.json(
+      { error: 'A company name is required', details: parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`) },
+      400,
+    );
+  }
+  const d = parsed.data;
+  const id = newId('co');
+
+  try {
+    await c.env.DB.prepare(
+      `INSERT INTO companies (id, name, contact_person, phone, address, notes, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    )
+      .bind(
+        id,
+        d.name.trim(),
+        d.contactPerson ?? null,
+        d.phone ?? null,
+        d.address ?? null,
+        d.notes ?? null,
+        new Date().toISOString(),
+      )
+      .run();
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (/UNIQUE constraint failed/.test(message)) {
+      return c.json({ error: 'A company with this name already exists' }, 409);
+    }
+    throw err;
+  }
+
+  return c.json({ id }, 201);
+});
+
+catalogRoutes.patch('/companies/:id', async (c) => {
+  const id = c.req.param('id');
+  const parsed = z
+    .object({
+      name: z.string().min(1).max(120).optional(),
+      contactPerson: z.string().max(120).nullable().optional(),
+      phone: z.string().max(30).nullable().optional(),
+      address: z.string().max(300).nullable().optional(),
+      notes: z.string().max(500).nullable().optional(),
+      isActive: z.boolean().optional(),
+    })
+    .safeParse(await c.req.json().catch(() => null));
+
+  if (!parsed.success) return c.json({ error: 'Invalid update' }, 400);
+  const d = parsed.data;
+
+  const sets: string[] = [];
+  const params: unknown[] = [];
+  if (d.name !== undefined) { sets.push('name = ?'); params.push(d.name.trim()); }
+  if (d.contactPerson !== undefined) { sets.push('contact_person = ?'); params.push(d.contactPerson); }
+  if (d.phone !== undefined) { sets.push('phone = ?'); params.push(d.phone); }
+  if (d.address !== undefined) { sets.push('address = ?'); params.push(d.address); }
+  if (d.notes !== undefined) { sets.push('notes = ?'); params.push(d.notes); }
+  if (d.isActive !== undefined) { sets.push('is_active = ?'); params.push(d.isActive ? 1 : 0); }
+
+  if (sets.length === 0) return c.json({ error: 'Nothing to update' }, 400);
+  params.push(id);
+
+  try {
+    const result = await c.env.DB.prepare(`UPDATE companies SET ${sets.join(', ')} WHERE id = ?`)
+      .bind(...params)
+      .run();
+    if (!result.meta.changes) return c.json({ error: 'Company not found' }, 404);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (/UNIQUE constraint failed/.test(message)) {
+      return c.json({ error: 'A company with this name already exists' }, 409);
+    }
+    throw err;
+  }
+
+  return c.json({ ok: true });
+});
+
+/**
+ * Delete a company, but only a genuinely unused one.
+ *
+ * The guard is a full dependency audit rather than "balance is zero", because a
+ * company can be fully paid and still own a product catalogue and a purchase
+ * history. Removing it would either fail on a foreign key (an ugly 500) or, if
+ * the key were ever dropped, silently orphan every product that pointed at it.
+ *
+ * `canDelete` from GET /companies/:id is advisory; this re-checks inside the
+ * request so a stale screen cannot delete something that has since gained data.
+ */
+catalogRoutes.delete('/companies/:id', async (c) => {
+  const id = c.req.param('id');
+
+  const company = await c.env.DB.prepare(`SELECT id FROM companies WHERE id = ?`).bind(id).first();
+  if (!company) return c.json({ error: 'Company not found' }, 404);
+
+  const usage = await companyUsage(c.env.DB, id);
+  if (!usage.canDelete) {
+    return c.json(
+      {
+        error: `Cannot delete this company: ${usage.blockedBy}. Deactivate it instead — it stays out of new purchases without disturbing the books.`,
+        code: 'company_in_use',
+        usage,
+      },
+      409,
+    );
+  }
+
+  await c.env.DB.prepare(`DELETE FROM companies WHERE id = ?`).bind(id).run();
+  return c.json({ ok: true, deleted: id });
 });
 
 /**

@@ -116,6 +116,39 @@ that is a code change with no migration.
 
 ---
 
+## Changed the design #4 — a report can be "correct" and still be wrong
+
+Two balances disagreed with each other, and both were found by using the app, not
+by a test.
+
+**Receivables.** The report was built from unpaid *invoices*, which is the natural
+way to attach an age to a debt. But a shop's khata carries forward: a customer can
+owe Rs 9,700 with no invoice behind it. That customer vanished from the report —
+the screen said nobody owed anything while their statement showed the debt.
+
+Fixed by taking the total from the **ledger** (SUM debit − credit, the figure that
+can never disagree with a statement) and the aging from **invoices** (the only
+place an age exists). Anything not attributable to an invoice is now surfaced as
+`unappliedPaisa` rather than silently dropped.
+
+**Payables.** The mirror-image mistake: computed as purchases minus payments. That
+ignores any payment made against an opening balance or not tied to a purchase, so
+paying a company Rs 50,000 left the payable unchanged on the report while the
+dashboard showed the reduced figure. Two screens, two answers.
+
+Fixed by reading the supplier ledger directly.
+
+**The lesson, recorded so it is not relearned:** any figure shown to the manager
+must have exactly one source. If two screens can compute the same number two
+different ways, they will eventually disagree, and a shopkeeper who sees two
+answers trusts neither. Every balance now comes from `ledger_entries`; aging is the
+only derived view, and it reconciles to the ledger explicitly.
+
+Both cases are regression-tested (`test/ledger-flows.test.ts`, "agrees with the
+ledger" suites).
+
+---
+
 ## Still open
 
 1. **The 10 ms CPU ceiling for reports.** Aggregation time inside D1 is not billed
@@ -148,9 +181,17 @@ apps/api/
   src/routes/auth.ts           /api/auth/*
   src/routes/sales.ts          /api/sales/*
   src/index.ts                 Hono app, CORS, error handling
-  test/sales.test.ts           18 tests
+  src/lib/purchases.ts         purchases, returns, supplier payments
+  src/lib/receipts.ts          customer receipts + allocation, expenses
+  src/lib/reports.ts           every report, each from a single source
+  src/routes/{sales,purchases,money,reports,catalog,customers}.ts
+  test/sales.test.ts                 18 tests
   test/auth-and-idempotency.test.ts  21 tests
+  test/catalog.test.ts               9 tests
+  test/ledger-flows.test.ts          18 tests
 ```
+
+**66 tests.**
 
 **39 tests, green under `--sequence.shuffle`.**
 
@@ -185,9 +226,13 @@ apps/api/
 
 ## Deliberate omissions in this slice
 
-- **Receipts, purchases, expenses have no routes yet.** Their tables and idempotency
-  keys exist; only sales are exposed, because sales is the money path.
-- **No UI.** Next slice is the billing screen.
+- **Sale returns have no route yet.** The table, ledger shape and idempotency key
+  exist; only the UI and endpoint are missing.
+- **No opening-balance entry screen.** Opening balances currently have to be posted
+  directly, which is why the demo seed does it in SQL. Needed before go-live.
+- **No backup job yet.** The nightly `d1 export` + GitHub/R2 copy described in
+  `02-architecture.md` is not written. This is the one piece of the plan that must
+  exist before real money goes in.
 - **`qty_on_hand` concurrency.** The guarded `UPDATE` prevents negative stock, but
   two simultaneous sales of the last unit will race; one will be correctly rejected
   by the guard. Correct, but the loser sees an ugly error. Acceptable for one

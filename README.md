@@ -8,6 +8,7 @@ Accounts, inventory and credit system for a pesticide retail shop (PKR).
 - [Phase 2b — GitHub Pages + Google Sheets evaluation](docs/plan/03-github-pages-and-google-sheets.md)
 - [Phase 3 — Data model](docs/plan/04-data-model.md)
 - [Build notes — verified findings](docs/plan/05-build-notes-verified.md)
+- [Deployment guide](docs/plan/06-deployment.md)
 
 ## Code
 - `apps/api` — Hono API on Cloudflare Workers + D1 (schema, ledger, sales, auth)

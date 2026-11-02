@@ -1,18 +1,30 @@
+# Ihsan Center API — Cloudflare Worker
 name = "ihsancenter-api"
 main = "src/index.ts"
 compatibility_date = "2024-12-18"
 compatibility_flags = ["nodejs_compat"]
 
+# Single-origin deployment: the Worker serves the built SPA as static assets and
+# the API under /api/*. This is what makes session cookies work in production —
+# the browser only ever talks to one origin, so no cross-site cookie policy applies.
+[assets]
+directory = "../web/dist"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+
 [[d1_databases]]
 binding = "DB"
 database_name = "ihsancenter"
-database_id = "local-dev-placeholder"
+# Replace with the id printed by:  wrangler d1 create ihsancenter
+database_id = "REPLACE_WITH_YOUR_DATABASE_ID"
 migrations_dir = "migrations"
 
-[vars]
-ENVIRONMENT = "development"
-ALLOWED_ORIGINS = "http://localhost:5173"
+[observability]
+enabled = true
 
-# Secrets are never committed. Set them with:
+[vars]
+ENVIRONMENT = "production"
+
+# Secrets are never committed. Set them after deploying:
 #   wrangler secret put SESSION_SECRET
-# For local development put them in apps/api/.dev.vars (git-ignored).
+# Local development reads apps/api/.dev.vars (git-ignored) instead.

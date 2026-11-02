@@ -355,3 +355,35 @@ running on every deploy rather than only when something is already broken.
 
 **Rule worth keeping:** a passing test suite says the logic is right. It says nothing
 about whether the URL, the binding name, or the asset handler agree with it.
+
+---
+
+## The shop could not add its first product
+
+Found the day the manager tried it: the Purchases screen showed `No match` for
+"Delta 4" and there was nowhere to go. `POST /catalog/products` existed and was
+tested, but **no screen called it**. Worse, `Stock.tsx` carried the line *"Products
+are created when you record a purchase"* — which was also untrue, because Purchases
+only searched existing products. A brand-new shop was a closed loop:
+
+    Stock      read-only list
+    Purchases  search only; "No match" was a dead end
+    Opening    lists existing products
+    Billing    cannot sell what does not exist
+
+The endpoint being well-tested is exactly why this went unnoticed: the tests proved
+the API works, and nothing proved a person could reach it. That is the same failure
+mode as the `apiUrl` bug — correct code, no path to it.
+
+Fixed in two places, because the two moments are different:
+
+- **Stock → "+ New product"**: the catalogue entry. Name, company, type, pack size,
+  unit, purchase and sale rate, reorder level, opening quantity. Opening quantity
+  defaults to 0 and only records a movement when non-zero.
+- **Purchases → "No match" → "+ Create…"**: creates the product inline and drops it
+  straight into the purchase line, so receiving a new brand does not require leaving
+  the invoice half-entered.
+
+Two deliberate frictions: a sale rate is **required** (a product with no price cannot
+be billed, and the failure would surface at the counter), and selling below cost asks
+for confirmation rather than blocking — a clearance line is legitimate, a typo is not.

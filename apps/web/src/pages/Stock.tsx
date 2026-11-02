@@ -1,7 +1,7 @@
 import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
-import { api } from '../lib/api';
-import { formatPkr, formatQty } from '../lib/money';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { api, type ProductCategory, type Company } from '../lib/api';
+import { formatPkr, formatQty, parseNumber } from '../lib/money';
 
 interface StockRow {
   id: string;
@@ -17,9 +17,34 @@ interface StockRow {
   company_id: string;
 }
 
+const CATEGORIES: { value: ProductCategory; label: string }[] = [
+  { value: 'insecticide', label: 'Insecticide' },
+  { value: 'fungicide', label: 'Fungicide' },
+  { value: 'herbicide', label: 'Herbicide' },
+  { value: 'fertilizer', label: 'Fertilizer' },
+  { value: 'seed', label: 'Seed' },
+  { value: 'other', label: 'Other' },
+];
+
 export default function StockPage() {
+  const queryClient = useQueryClient();
   const [lowOnly, setLowOnly] = useState(false);
   const [company, setCompany] = useState<string>('');
+
+  // ---- new product form ----
+  const [showForm, setShowForm] = useState(false);
+  const [name, setName] = useState('');
+  const [companyId, setCompanyId] = useState('');
+  const [category, setCategory] = useState<ProductCategory>('insecticide');
+  const [packSize, setPackSize] = useState('');
+  const [unit, setUnit] = useState('pcs');
+  const [purchaseRate, setPurchaseRate] = useState('');
+  const [saleRate, setSaleRate] = useState('');
+  const [reorderLevel, setReorderLevel] = useState('');
+  const [openingQty, setOpeningQty] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [saved, setSaved] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
 
   const { data, isLoading } = useQuery({
     queryKey: ['stock', lowOnly],
@@ -28,7 +53,7 @@ export default function StockPage() {
 
   const companies = useQuery({
     queryKey: ['companies'],
-    queryFn: () => api<{ companies: { id: string; name: string }[] }>('/catalog/companies'),
+    queryFn: () => api<{ companies: Company[] }>('/catalog/companies'),
   });
 
   const rows = (data?.stock ?? []).filter((r) => !company || r.company_id === company);
@@ -41,6 +66,64 @@ export default function StockPage() {
     (sum, r) => sum + Math.round((r.qty_on_hand_milli * r.sale_rate_paisa) / 1000),
     0,
   );
+
+  function resetForm() {
+    setName('');
+    setPackSize('');
+    setUnit('pcs');
+    setPurchaseRate('');
+    setSaleRate('');
+    setReorderLevel('');
+    setOpeningQty('');
+    setError(null);
+  }
+
+  async function save() {
+    setError(null);
+    setSaved(null);
+
+    if (!name.trim()) return setError('Enter the product name, exactly as it appears on the pack');
+    if (!companyId) return setError('Choose which company makes it');
+
+    const cost = parseNumber(purchaseRate);
+    const sell = parseNumber(saleRate);
+    if (sell <= 0) return setError('Enter a sale rate — without it the product cannot be billed');
+    if (cost > 0 && sell < cost) {
+      // Not an error: shops do sell at a loss on a clearance line. But a typo here
+      // is invisible once the invoice is printed, so make it deliberate.
+      const ok = window.confirm(
+        `Sale rate ${formatPkr(sell * 100)} is below the purchase rate ${formatPkr(cost * 100)}. ` +
+          'Sell at a loss?',
+      );
+      if (!ok) return;
+    }
+
+    setBusy(true);
+    try {
+      const res = await api<{ id: string }>('/catalog/products', {
+        method: 'POST',
+        body: JSON.stringify({
+          name: name.trim(),
+          companyId,
+          category,
+          unit: unit.trim() || 'pcs',
+          packSize: packSize.trim() || undefined,
+          purchaseRate: cost,
+          saleRate: sell,
+          reorderLevel: parseNumber(reorderLevel),
+          openingQty: parseNumber(openingQty),
+        }),
+      });
+      setSaved(res.id);
+      resetForm();
+      await queryClient.invalidateQueries({ queryKey: ['stock'] });
+      await queryClient.invalidateQueries({ queryKey: ['products'] });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not save the product');
+    } finally {
+      setBusy(false);
+    }
+  }
 
   return (
     <div>
@@ -71,11 +154,146 @@ export default function StockPage() {
         </div>
       </div>
 
+      {/* Adding a product is the first thing a new shop needs, so it lives here
+          rather than being implied by a purchase. Recording a purchase also adds
+          stock to an existing product; this is for the catalogue itself. */}
+      <div className="card">
+        <div className="row wrap">
+          <h2 style={{ margin: 0 }}>Products</h2>
+          <div className="grow" />
+          <button className="btn" onClick={() => { setShowForm((v) => !v); setError(null); setSaved(null); }}>
+            {showForm ? 'Close' : '+ New product'}
+          </button>
+        </div>
+
+        {saved && !showForm && (
+          <div className="alert success" style={{ marginTop: 12 }}>
+            Product added. It is now searchable in Purchases and Billing.
+          </div>
+        )}
+
+        {showForm && (
+          <div style={{ marginTop: 14, paddingTop: 14, borderTop: '1px solid var(--slate-200)' }}>
+            <div className="form-grid">
+              <div className="span-2">
+                <label className="muted" style={{ fontSize: 12 }}>Product name</label>
+                <input
+                  className="input"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  placeholder="e.g. Delta 4"
+                  autoFocus
+                />
+              </div>
+
+              <div>
+                <label className="muted" style={{ fontSize: 12 }}>Company</label>
+                <select className="select" value={companyId} onChange={(e) => setCompanyId(e.target.value)}>
+                  <option value="">Choose…</option>
+                  {companies.data?.companies.map((c) => (
+                    <option key={c.id} value={c.id}>{c.name}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="muted" style={{ fontSize: 12 }}>Type</label>
+                <select
+                  className="select"
+                  value={category}
+                  onChange={(e) => setCategory(e.target.value as ProductCategory)}
+                >
+                  {CATEGORIES.map((c) => (
+                    <option key={c.value} value={c.value}>{c.label}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="muted" style={{ fontSize: 12 }}>Pack size</label>
+                <input
+                  className="input"
+                  value={packSize}
+                  onChange={(e) => setPackSize(e.target.value)}
+                  placeholder="e.g. 250 ml"
+                />
+              </div>
+
+              <div>
+                <label className="muted" style={{ fontSize: 12 }}>Unit</label>
+                <input className="input" value={unit} onChange={(e) => setUnit(e.target.value)} placeholder="pcs / bottle / kg" />
+              </div>
+
+              <div>
+                <label className="muted" style={{ fontSize: 12 }}>Purchase rate (Rs)</label>
+                <input
+                  className="input"
+                  inputMode="decimal"
+                  value={purchaseRate}
+                  onChange={(e) => setPurchaseRate(e.target.value)}
+                  placeholder="0"
+                />
+              </div>
+
+              <div>
+                <label className="muted" style={{ fontSize: 12 }}>Sale rate (Rs)</label>
+                <input
+                  className="input"
+                  inputMode="decimal"
+                  value={saleRate}
+                  onChange={(e) => setSaleRate(e.target.value)}
+                  placeholder="0"
+                />
+              </div>
+
+              <div>
+                <label className="muted" style={{ fontSize: 12 }}>Reorder at</label>
+                <input
+                  className="input"
+                  inputMode="decimal"
+                  value={reorderLevel}
+                  onChange={(e) => setReorderLevel(e.target.value)}
+                  placeholder="optional"
+                />
+              </div>
+
+              <div>
+                <label className="muted" style={{ fontSize: 12 }}>Opening quantity</label>
+                <input
+                  className="input"
+                  inputMode="decimal"
+                  value={openingQty}
+                  onChange={(e) => setOpeningQty(e.target.value)}
+                  placeholder="0"
+                />
+              </div>
+            </div>
+
+            <p className="muted" style={{ fontSize: 12, marginTop: 10 }}>
+              Leave opening quantity at 0 if you are going to enter it on the Opening screen, or if
+              you will bring it in through Purchases. Entering it here records a stock movement at
+              the purchase rate.
+            </p>
+
+            {error && <div className="alert error">{error}</div>}
+
+            <div className="row" style={{ marginTop: 10 }}>
+              <button className="btn" onClick={save} disabled={busy}>
+                {busy ? 'Saving…' : 'Save product'}
+              </button>
+              <button className="btn secondary" onClick={resetForm} disabled={busy}>Clear</button>
+            </div>
+          </div>
+        )}
+      </div>
+
       <div className="card">
         {isLoading ? (
           <p className="muted">Loading…</p>
         ) : rows.length === 0 ? (
-          <p className="muted">No products yet. Products are created when you record a purchase.</p>
+          <p className="muted">
+            No products yet. Use <strong>+ New product</strong> above to add the first one.
+          </p>
         ) : (
           <table>
             <thead>

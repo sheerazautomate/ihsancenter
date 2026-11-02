@@ -27,6 +27,12 @@ export default function PurchasesPage() {
   const [success, setSuccess] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [idemKey, setIdemKey] = useState(() => crypto.randomUUID());
+  // Inline product creation, so a new brand does not force a trip to Stock and
+  // back — which is what "No match" used to mean, with nothing to click.
+  const [creating, setCreating] = useState(false);
+  const [newPackSize, setNewPackSize] = useState('');
+  const [newSaleRate, setNewSaleRate] = useState('');
+  const [createError, setCreateError] = useState<string | null>(null);
 
   const companies = useQuery({
     queryKey: ['companies'],
@@ -159,8 +165,116 @@ export default function PurchasesPage() {
                     </div>
                   </div>
                 ))}
-                {search.data.products.length === 0 && (
-                  <div className="search-item"><div className="meta">No match</div></div>
+                {search.data.products.length === 0 && !creating && (
+                  <div className="search-item" style={{ display: 'block' }}>
+                    <div className="meta" style={{ marginBottom: 8 }}>
+                      No match for “{query}”
+                    </div>
+                    <button
+                      className="btn sm"
+                      onClick={() => {
+                        if (!companyId) {
+                          setCreateError('Choose the company first — the product belongs to one');
+                          return;
+                        }
+                        setCreating(true);
+                        setNewPackSize('');
+                        setNewSaleRate('');
+                        setCreateError(null);
+                      }}
+                    >
+                      + Create “{query}”
+                    </button>
+                  </div>
+                )}
+
+                {creating && (
+                  <div className="search-item" style={{ display: 'block' }}>
+                    <div className="name" style={{ marginBottom: 8 }}>
+                      New product: “{query}”
+                    </div>
+                    <div className="form-grid" style={{ marginBottom: 10 }}>
+                      <div>
+                        <label className="muted" style={{ fontSize: 12 }}>Pack size</label>
+                        <input
+                          className="input"
+                          value={newPackSize}
+                          onChange={(e) => setNewPackSize(e.target.value)}
+                          placeholder="e.g. 250 ml"
+                        />
+                      </div>
+                      <div>
+                        <label className="muted" style={{ fontSize: 12 }}>Sale rate (Rs)</label>
+                        <input
+                          className="input"
+                          inputMode="decimal"
+                          value={newSaleRate}
+                          onChange={(e) => setNewSaleRate(e.target.value)}
+                          placeholder="for billing"
+                        />
+                      </div>
+                    </div>
+                    {createError && <div className="alert error">{createError}</div>}
+                    <div className="row">
+                      <button
+                        className="btn sm"
+                        disabled={busy}
+                        onClick={async () => {
+                          setCreateError(null);
+                          const sale = parseNumber(newSaleRate);
+                          if (sale <= 0) {
+                            return setCreateError('Enter a sale rate so this product can be billed later');
+                          }
+                          setBusy(true);
+                          try {
+                            const created = await api<{ id: string }>('/catalog/products', {
+                              method: 'POST',
+                              body: JSON.stringify({
+                                name: query.trim(),
+                                companyId,
+                                category: 'other',
+                                packSize: newPackSize.trim() || undefined,
+                                purchaseRate: 0,
+                                saleRate: sale,
+                              }),
+                            });
+                            await queryClient.invalidateQueries({ queryKey: ['products'] });
+                            addProduct({
+                              id: created.id,
+                              name: query.trim(),
+                              sku: null,
+                              barcode: null,
+                              category: 'other',
+                              unit: 'pcs',
+                              pack_size: newPackSize.trim() || null,
+                              sale_rate_paisa: Math.round(sale * 100),
+                              purchase_rate_paisa: 0,
+                              qty_on_hand_milli: 0,
+                              reorder_level_milli: 0,
+                              company_id: companyId,
+                              company_name:
+                                companies.data?.companies.find((c) => c.id === companyId)?.name ?? '',
+                            });
+                            setCreating(false);
+                            setQuery('');
+                          } catch (e) {
+                            setCreateError(
+                              e instanceof ApiError
+                                ? e.message
+                                : 'Could not create the product',
+                            );
+                          } finally {
+                            setBusy(false);
+                          }
+                        }}
+                      >
+                        Create and add
+                      </button>
+                      <button className="btn secondary sm" onClick={() => setCreating(false)}>
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
                 )}
               </div>
             )}

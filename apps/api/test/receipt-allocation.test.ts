@@ -211,3 +211,150 @@ describe('collecting against a chosen invoice', () => {
     expect(unpaid.invoices.find((i) => i.id === other.id)?.bal).toBe(100000);
   });
 });
+
+describe('the dated payment history on an invoice', () => {
+  it('lists each payment with its date and the balance it left', async () => {
+    const customerId = await newCustomer('Pays In Instalments');
+    const invoice = await creditSale(customerId, 10, 100); // Rs 1000
+
+    // Three instalments on three different dates, smallest last.
+    for (const [amount, date] of [
+      [400, '2026-03-05'],
+      [350, '2026-03-20'],
+      [250, '2026-04-02'],
+    ] as [number, string][]) {
+      const res = await post('/api/money/receipts', {
+        customerId,
+        amount,
+        mode: 'cash',
+        cashAccountId: 'ca_counter',
+        docDate: date,
+        allocations: [{ invoiceId: invoice.id, amount }],
+      });
+      expect(res.status).toBe(201);
+    }
+
+    const detail = await (await get(`/api/sales/${invoice.id}`)).json<{
+      payment: {
+        settledPaisa: number;
+        outstandingPaisa: number;
+        clearedOn: string | null;
+        lastPaidOn: string | null;
+        history: {
+          date: string;
+          document: string;
+          kind: string;
+          amountPaisa: number;
+          balanceAfterPaisa: number;
+        }[];
+      };
+    }>();
+
+    const p = detail.payment;
+    expect(p.settledPaisa).toBe(100000);
+    expect(p.outstandingPaisa).toBe(0);
+
+    // The dates the shop asked for.
+    expect(p.history.map((h) => h.date)).toEqual(['2026-03-05', '2026-03-20', '2026-04-02']);
+    expect(p.history.map((h) => h.amountPaisa)).toEqual([40000, 35000, 25000]);
+    expect(p.history.map((h) => h.balanceAfterPaisa)).toEqual([60000, 25000, 0]);
+
+    // Paid in full on the date of the final instalment, not the invoice date.
+    expect(p.clearedOn).toBe('2026-04-02');
+    expect(p.lastPaidOn).toBe('2026-04-02');
+    expect(p.history.every((h) => h.kind === 'receipt')).toBe(true);
+    expect(p.history[0].document).toMatch(/^REC-/);
+  });
+
+  it('reports no cleared date while money is still owed', async () => {
+    const customerId = await newCustomer('Still Owes');
+    const invoice = await creditSale(customerId, 10, 100); // Rs 1000
+
+    await post('/api/money/receipts', {
+      customerId,
+      amount: 400,
+      mode: 'cash',
+      cashAccountId: 'ca_counter',
+      docDate: '2026-05-10',
+      allocations: [{ invoiceId: invoice.id, amount: 400 }],
+    });
+
+    const detail = await (await get(`/api/sales/${invoice.id}`)).json<{
+      payment: { outstandingPaisa: number; clearedOn: string | null; lastPaidOn: string | null; history: unknown[] };
+    }>();
+
+    expect(detail.payment.outstandingPaisa).toBe(60000);
+    // Null, not the last payment date: "cleared on" must never appear for a bill
+    // that is still open, or the slip tells the farmer he is done when he is not.
+    expect(detail.payment.clearedOn).toBeNull();
+    expect(detail.payment.lastPaidOn).toBe('2026-05-10');
+    expect(detail.payment.history).toHaveLength(1);
+  });
+
+  it('counts a credit note from a return as a dated settlement', async () => {
+    // Sales returns have no endpoint yet (only purchase returns do), so this
+    // writes the rows the way a return would and checks the invoice still reads
+    // them correctly. When the endpoint lands this should switch to calling it.
+    const customerId = await newCustomer('Returns Something');
+    const invoice = await creditSale(customerId, 10, 100); // Rs 1000
+
+    const now = new Date().toISOString();
+    await DB.batch([
+      DB.prepare(
+        `INSERT INTO sale_returns
+           (id, return_no, doc_date, customer_id, invoice_id, total_paisa, cost_total_paisa,
+            refund_cash_paisa, refund_bank_paisa, credit_note_paisa, status, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, 0, 0, 0, ?, 'open', ?)`,
+      ).bind('sret_test_1', 'SRET-TEST-1', '2026-06-15', customerId, invoice.id, 40000, 40000, now),
+      DB.prepare(
+        `INSERT INTO sale_return_lines
+           (id, return_id, product_id, qty_milli, rate_paisa, line_total_paisa, cost_paisa)
+         VALUES (?, ?, ?, 4000, 10000, 40000, 40000)`,
+      ).bind('srl_test_1', 'sret_test_1', productId),
+    ]);
+
+    const detail = await (await get(`/api/sales/${invoice.id}`)).json<{
+      payment: {
+        settledPaisa: number;
+        outstandingPaisa: number;
+        clearedOn: string | null;
+        history: { kind: string; date: string; amountPaisa: number; balanceAfterPaisa: number }[];
+      };
+    }>();
+
+    // A return is money the farmer no longer owes, and it carries its own date.
+    const note = detail.payment.history.find((h) => h.kind === 'credit note')!;
+    expect(note).toBeDefined();
+    expect(note.date).toBe('2026-06-15');
+    expect(note.amountPaisa).toBe(40000);
+    expect(note.balanceAfterPaisa).toBe(60000);
+    expect(detail.payment.outstandingPaisa).toBe(60000);
+    expect(detail.payment.clearedOn).toBeNull(); // still owes Rs 600
+  });
+
+  it('shows the cleared date in the invoice list too', async () => {
+    const customerId = await newCustomer('Listed Cleared');
+    const invoice = await creditSale(customerId, 5, 100); // Rs 500
+
+    await post('/api/money/receipts', {
+      customerId,
+      amount: 500,
+      mode: 'cash',
+      cashAccountId: 'ca_counter',
+      docDate: '2026-07-01',
+      allocations: [{ invoiceId: invoice.id, amount: 500 }],
+    });
+
+    const list = await (await get('/api/sales?limit=200')).json<{
+      invoices: {
+        id: string;
+        pay_state: string;
+        cleared_on: string | null;
+        last_paid_on: string | null;
+      }[];
+    }>();
+    const row = list.invoices.find((i) => i.id === invoice.id)!;
+    expect(row.pay_state).toBe('settled');
+    expect(row.cleared_on).toBe('2026-07-01');
+  });
+});

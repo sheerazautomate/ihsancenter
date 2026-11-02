@@ -131,7 +131,17 @@ salesRoutes.get('/', async (c) => {
               WHEN b.bal <= 0 THEN 'settled'
               WHEN b.bal < i.credit_paisa THEN 'part'
               ELSE 'open'
-            END AS pay_state
+            END AS pay_state,
+            -- The dates the shop asks for at a glance: when the last money came
+            -- in, and the date the bill finally reached zero.
+            (SELECT MAX(r.doc_date) FROM receipt_allocations a
+               JOIN customer_receipts r ON r.id = a.receipt_id AND r.status = 'open'
+              WHERE a.invoice_id = i.id) AS last_paid_on,
+            CASE WHEN i.credit_paisa > 0 AND b.bal <= 0
+                 THEN (SELECT MAX(r.doc_date) FROM receipt_allocations a
+                         JOIN customer_receipts r ON r.id = a.receipt_id AND r.status = 'open'
+                        WHERE a.invoice_id = i.id)
+                 ELSE NULL END AS cleared_on
      FROM sales_invoices i
      JOIN customers c ON c.id = i.customer_id
      LEFT JOIN (${INVOICE_BALANCE_SQL}) b ON b.id = i.id
@@ -170,20 +180,84 @@ salesRoutes.get('/:id', async (c) => {
 
   const settledPaisa = Number(invoice.settled_paisa ?? 0);
   const creditPaisa = Number(invoice.credit_paisa ?? 0);
+  // Payment history, oldest first, with what the balance became after each one.
+  // "Paid Rs 1,000 on 5 March" is not answerable from a single total: the farmer
+  // needs to see each date and the balance it left, which is what he is checking
+  // when he holds the slip up against his own notebook.
   const received = await c.env.DB.prepare(
-    `SELECT r.receipt_no, r.doc_date, r.mode, a.amount_paisa
+    `SELECT r.receipt_no, r.doc_date, r.mode, a.amount_paisa, ca.name AS account_name
      FROM receipt_allocations a JOIN customer_receipts r ON r.id = a.receipt_id
-     WHERE a.invoice_id = ?
+     LEFT JOIN cash_accounts ca ON ca.id = r.cash_account_id
+     WHERE a.invoice_id = ? AND r.status = 'open'
      ORDER BY r.doc_date ASC, r.created_at ASC`,
   )
     .bind(c.req.param('id'))
-    .all();
+    .all<{
+      receipt_no: string;
+      doc_date: string;
+      mode: string;
+      amount_paisa: number;
+      account_name: string | null;
+    }>();
+
+  // Credit notes from sale returns also settle a bill and carry their own date.
+  const creditNotes = await c.env.DB.prepare(
+    `SELECT return_no, doc_date, credit_note_paisa AS amount_paisa
+     FROM sale_returns
+     WHERE invoice_id = ? AND status = 'open' AND credit_note_paisa > 0
+     ORDER BY doc_date ASC, created_at ASC`,
+  )
+    .bind(c.req.param('id'))
+    .all<{ return_no: string; doc_date: string; amount_paisa: number }>();
+
+  type HistoryRow = {
+    date: string;
+    document: string;
+    kind: 'receipt' | 'credit note';
+    mode: string;
+    amountPaisa: number;
+    balanceAfterPaisa: number;
+  };
+
+  const merged: Omit<HistoryRow, 'balanceAfterPaisa'>[] = [
+    ...(received.results ?? []).map((r) => ({
+      date: r.doc_date,
+      document: r.receipt_no,
+      kind: 'receipt' as const,
+      mode: r.mode,
+      amountPaisa: r.amount_paisa,
+    })),
+    ...(creditNotes.results ?? []).map((r) => ({
+      date: r.doc_date,
+      document: r.return_no,
+      kind: 'credit note' as const,
+      mode: 'return',
+      amountPaisa: r.amount_paisa,
+    })),
+  ].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+
+  // Running balance down the history, never below zero, and the date it reached
+  // zero -- that is the "cleared on" the shop needs to say out loud.
+  let remaining = creditPaisa;
+  let clearedOn: string | null = creditPaisa === 0 ? String(invoice.doc_date) : null;
+  const history: HistoryRow[] = merged.map((row) => {
+    remaining = Math.max(0, remaining - row.amountPaisa);
+    if (remaining === 0 && !clearedOn) clearedOn = row.date;
+    return { ...row, balanceAfterPaisa: remaining };
+  });
+
+  const lastPaidOn = merged.length > 0 ? merged[merged.length - 1].date : null;
 
   const payment = {
     settledPaisa,
     outstandingPaisa: Math.max(0, creditPaisa - settledPaisa),
     // Overpaid/credit-note cases: never show a negative "still owed".
     overpaidPaisa: Math.max(0, settledPaisa - creditPaisa),
+    // Dates the shop asks about: when the bill was last touched, and when it was
+    // finally done with. Null clearedOn means it is still outstanding.
+    clearedOn,
+    lastPaidOn,
+    history,
     receipts: received.results,
   };
 

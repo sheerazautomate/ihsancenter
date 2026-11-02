@@ -14,6 +14,8 @@ interface InvoiceRow {
   customer_name: string;
   outstanding_paisa: number;
   pay_state: 'paid' | 'settled' | 'part' | 'open';
+  last_paid_on: string | null;
+  cleared_on: string | null;
 }
 
 export default function InvoicesPage() {
@@ -98,14 +100,30 @@ export default function InvoicesPage() {
                     {i.status === 'void' ? (
                       <span className="muted">—</span>
                     ) : i.pay_state === 'paid' || i.pay_state === 'settled' ? (
-                      <span className="badge">paid</span>
+                      <>
+                        <span className="badge">paid</span>
+                        {i.cleared_on && (
+                          <div className="muted" style={{ fontSize: 11 }}>{i.cleared_on}</div>
+                        )}
+                      </>
                     ) : i.pay_state === 'part' ? (
                       <>
                         <strong>{formatPkr(i.outstanding_paisa)}</strong>
-                        <div className="muted" style={{ fontSize: 11 }}>part paid</div>
+                        {i.last_paid_on && (
+                          <div className="muted" style={{ fontSize: 11 }}>
+                            last paid {i.last_paid_on}
+                          </div>
+                        )}
                       </>
                     ) : (
-                      <strong>{formatPkr(i.outstanding_paisa)}</strong>
+                      <>
+                        <strong>{formatPkr(i.outstanding_paisa)}</strong>
+                        {i.last_paid_on && (
+                          <div className="muted" style={{ fontSize: 11 }}>
+                            part paid {i.last_paid_on}
+                          </div>
+                        )}
+                      </>
                     )}
                   </td>
                   <td>

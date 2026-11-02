@@ -181,5 +181,46 @@ purchaseRoutes.post('/payments', async (c) => {
   });
 
   if (!result.ok) return c.json({ error: result.error }, 400);
-  return c.json(result, 201);
+  return c.json(result, result.replayed ? 200 : 201);
+});
+
+/**
+ * A company's unpaid bills, oldest first.
+ *
+ * Purchases are not allocated against payments the way invoices are against
+ * receipts (there is no supplier_allocation table), so a bill cannot be marked
+ * paid one by one. What this answers is "which bills make up what I owe", which
+ * is what a manager needs while standing in front of the supplier.
+ */
+purchaseRoutes.get('/unpaid/:companyId', async (c) => {
+  const rows = await c.env.DB.prepare(
+    `SELECT p.id, p.purchase_no, p.doc_date, p.supplier_invoice_no,
+            p.total_paisa, p.payable_paisa,
+            COALESCE((SELECT SUM(l.line_total_paisa) FROM purchase_lines l
+                       WHERE l.purchase_id = p.id), 0) AS lines_paisa,
+            COALESCE((SELECT COUNT(*) FROM purchase_lines l
+                       WHERE l.purchase_id = p.id), 0) AS line_count
+     FROM purchases p
+     WHERE p.company_id = ? AND p.status = 'open' AND p.payable_paisa > 0
+     ORDER BY p.doc_date ASC, p.id ASC`,
+  )
+    .bind(c.req.param('companyId'))
+    .all();
+
+  return c.json({ purchases: rows.results });
+});
+
+/** Payments already made to one company, newest first. */
+purchaseRoutes.get('/payments/:companyId', async (c) => {
+  const rows = await c.env.DB.prepare(
+    `SELECT id, payment_no, doc_date, amount_paisa, mode, reference, notes
+     FROM supplier_payments
+     WHERE company_id = ?
+     ORDER BY doc_date DESC, created_at DESC
+     LIMIT 50`,
+  )
+    .bind(c.req.param('companyId'))
+    .all();
+
+  return c.json({ payments: rows.results });
 });

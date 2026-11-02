@@ -15,6 +15,7 @@ import StockPage from './pages/Stock';
 import CustomersPage from './pages/Customers';
 import OpeningPage from './pages/Opening';
 import CompaniesPage from './pages/Companies';
+import SupplierPaymentsPage from './pages/SupplierPayments';
 
 export interface CurrentUser {
   id: string;
@@ -80,6 +81,7 @@ function Shell({ user }: { user: CurrentUser }) {
             ['/invoices', 'Invoices', false],
             ['/purchases', 'Purchases', false],
             ['/receivables', 'Udhaar', false],
+            ['/payables', 'Payables', false],
             ['/customers', 'Customers', false],
             ['/companies', 'Companies', false],
             ['/stock', 'Stock', false],
@@ -121,6 +123,7 @@ function Shell({ user }: { user: CurrentUser }) {
           <Route path="/stock" element={<StockPage />} />
           <Route path="/customers" element={<CustomersPage />} />
           <Route path="/companies" element={<CompaniesPage />} />
+          <Route path="/payables" element={<SupplierPaymentsPage />} />
           <Route path="/opening" element={<OpeningPage />} />
         </Routes>
       </main>

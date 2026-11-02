@@ -22,7 +22,6 @@ export default function PurchasesPage() {
   const [freight, setFreight] = useState('');
   const [discount, setDiscount] = useState('');
   const [paidCash, setPaidCash] = useState('');
-  const [supplierPayments, setSupplierPayments] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -407,7 +406,6 @@ export default function PurchasesPage() {
             </table>
           )}
         </div>
-        {supplierPayments && null}
       </div>
     </div>
   );

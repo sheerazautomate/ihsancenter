@@ -1,10 +1,12 @@
--- 0004_demo_seed.sql
+-- demo_seed.sql
 -- Demonstration data for local development only.
--- DO NOT apply this to the production database: it would put fake stock and
--- fake customer balances into real books.
 --
--- Apply with: npm run db:reset:local (which includes this file)
--- Skip on production: only run 0001-0003 there.
+-- NOT a migration. It lives outside migrations/ precisely so that it cannot be
+-- applied to production by a wildcard over that directory -- an accidental
+-- `migrations/*.sql` against real books would invent fake customers, fake stock
+-- and fake balances, all of which cannot be deleted cleanly once posted.
+--
+-- Applied by: npm run db:reset:local
 
 -- ---------- customers ----------
 INSERT INTO customers (id, name, phone, village, type, credit_limit_paisa, created_at) VALUES

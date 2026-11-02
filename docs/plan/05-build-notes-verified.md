@@ -275,3 +275,42 @@ the rows the batch is about to create.
 - **A rule that lives only on the server reads as a mystery in the UI.** The screen
   locks rows that already carry an opening and shows the posted figure as text, so
   the manager never types an amount into a field that will be rejected.
+
+---
+
+## Deployment pass — three failures that look like success
+
+None of these can be caught by a test suite, because all three happen after the code
+is correct. They were found by running the deploy path locally and reading what the
+tooling actually did.
+
+**1. `wrangler d1 execute --file` is not idempotent, so a half-finished deploy is
+unrecoverable.** Re-running `0001_init.sql` failed on the first `CREATE TABLE`, which
+left no way forward and no way back: the obvious next step — "drop it and start over"
+— is the one thing you must not do with real data in the table. Every migration now
+uses `CREATE TABLE IF NOT EXISTS` / `CREATE INDEX IF NOT EXISTS` / `INSERT OR IGNORE`,
+and the six idempotency columns live in `0001`'s `CREATE TABLE` instead of a separate
+`ALTER TABLE` (which SQLite can never re-run). Verified: all three files applied
+twice to a fresh database, clean both times. No production database existed yet, so
+this was a free fix rather than a migration.
+
+**2. Demo data in `migrations/` is a loaded gun.** `0004_demo_seed.sql` carried a
+prominent "DO NOT RUN IN PRODUCTION" comment, which is worth nothing against
+`migrations/*.sql` — a glob, a CI step, or a tired person at midnight. Fake customers
+and fake stock cannot be deleted cleanly once they are posted to real books, so the
+file now lives in `apps/api/demo/demo_seed.sql`, outside the directory that means
+"apply this to the database". The preflight script fails if anything demo-like
+reappears there.
+
+**3. Deleting the local D1 file under a running dev server looks like a broken
+secret.** `npm run db:reset:local` while `wrangler dev` was up left workerd holding a
+path to a file that no longer existed; every query returned
+`SQLITE_CANTOPEN: unable to open database file`, which the API's error handler turns
+into the same generic 500 that a missing `SESSION_SECRET` produces. Two very different
+causes, one symptom. The reset script now refuses to run while :8787 is listening and
+prints why.
+
+The general point: **a deployment is not done when the upload succeeds.** Each of
+these was invisible until something ran against the deployed shape, which is why
+`scripts/deploy-check.mjs` and `scripts/smoke.mjs` exist and why both were tested by
+deliberately breaking the config and watching them fail.

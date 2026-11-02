@@ -7,12 +7,15 @@
     "dev": "wrangler dev --port 8787 --ip 0.0.0.0",
     "deploy": "wrangler deploy",
     "typecheck": "tsc --noEmit",
-    "db:migrate:local": "wrangler d1 execute ihsancenter --local --file=./migrations/0001_init.sql && wrangler d1 execute ihsancenter --local --file=./migrations/0002_seed.sql && wrangler d1 execute ihsancenter --local --file=./migrations/0003_auth_and_idempotency.sql",
-    "db:seed:local": "wrangler d1 execute ihsancenter --local --file=./migrations/0004_demo_seed.sql",
-    "db:reset:local": "rm -rf .wrangler/state/v3/d1 && npm run db:migrate:local && npm run db:seed:local",
+    "db:migrate:local": "wrangler d1 execute ihsancenter --local --yes --file=./migrations/0001_init.sql && wrangler d1 execute ihsancenter --local --yes --file=./migrations/0002_seed.sql && wrangler d1 execute ihsancenter --local --yes --file=./migrations/0003_auth_and_idempotency.sql",
+    "db:seed:local": "wrangler d1 execute ihsancenter --local --yes --file=./demo/demo_seed.sql",
+    "db:reset:local": "node ../../scripts/reset-db.mjs",
     "db:console": "wrangler d1 execute ihsancenter --local --command",
     "test": "vitest run",
-    "bench": "vitest run --config vitest.bench.config.ts"
+    "bench": "vitest run --config vitest.bench.config.ts",
+    "db:migrate:remote": "wrangler d1 execute ihsancenter --remote --yes --file=./migrations/0001_init.sql && wrangler d1 execute ihsancenter --remote --yes --file=./migrations/0002_seed.sql && wrangler d1 execute ihsancenter --remote --yes --file=./migrations/0003_auth_and_idempotency.sql",
+    "deploy:build": "cd ../web && npm run build",
+    "deploy:check": "node ../../scripts/deploy-check.mjs"
   },
   "dependencies": {
     "hono": "^4.6.14",

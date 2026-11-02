@@ -14,6 +14,25 @@ https://ihsancenter-api.<your-subdomain>.workers.dev
 
 ---
 
+## The whole thing, as a checklist
+
+Run from the repo root, in this order. Each line has a section below if it fails.
+
+```bash
+npx wrangler login                          # once per machine (§0)
+cd apps/api && npx wrangler d1 create ihsancenter     # §1 — paste the id into wrangler.toml
+cd ../.. && npm run db:migrate:remote       # §2
+cd apps/api && npx wrangler secret put SESSION_SECRET # §3
+cd ../.. && npm run deploy:build            # §4 — build the SPA first
+npm run deploy:check                        # §4 — blocks the silent failures
+npm run deploy --workspace @ihsan/api       # §4
+curl -X POST https://<your-worker>/api/auth/bootstrap -H 'Content-Type: application/json' \
+  -d '{"name":"Ihsan","username":"ihsan","password":"A-REAL-PASSWORD"}'   # §5
+node scripts/smoke.mjs https://<your-worker> --user ihsan --password 'A-REAL-PASSWORD'  # §5
+```
+
+---
+
 ## 0. What you need first
 
 | Thing | Why | Cost |
@@ -56,27 +75,36 @@ single most common first-time error.
 
 ## 2. Apply the schema to the real database
 
-The migrations are numbered and must run in order. Note `--remote`: without it you
-are writing to the local simulator, not production.
+One command:
 
 ```bash
-npx wrangler d1 execute ihsancenter --remote --file=./migrations/0001_init.sql
-npx wrangler d1 execute ihsancenter --remote --file=./migrations/0002_seed.sql
-npx wrangler d1 execute ihsancenter --remote --file=./migrations/0003_auth_and_idempotency.sql
+npm run db:migrate:remote        # from the repo root
 ```
 
-**Do NOT run `0004_demo_seed.sql`.** It inserts fake products, fake customers and a
-fake opening balance. Those would be real rows in the shop's books.
+It runs `0001` → `0002` → `0003` against the remote database with `--remote`. Without
+`--remote` you are writing to the local simulator, not production — the most common
+way to "deploy successfully" to an empty database.
+
+**All three migrations are safe to re-run.** If step 2 dies halfway through (laptop
+sleeps, network drops), run it again rather than trying to guess which statements
+landed. This was made true deliberately: `CREATE TABLE IF NOT EXISTS`,
+`CREATE INDEX IF NOT EXISTS`, `INSERT OR IGNORE`, and the idempotency columns live in
+`0001`'s `CREATE TABLE` rather than in a separate `ALTER TABLE` that could never be
+repeated.
+
+**Demo data is no longer in `migrations/`.** It lives in `apps/api/demo/demo_seed.sql`,
+outside the directory any wildcard or tool scan would apply to production. Fake
+customers and fake stock cannot be deleted cleanly once posted to real books, so the
+file was moved rather than left there with a warning comment.
 
 Verify:
 
 ```bash
 npx wrangler d1 execute ihsancenter --remote \
-  --command "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
+  --command "SELECT COUNT(*) AS tables FROM sqlite_master WHERE type='table'"
 ```
 
-You should see all 20+ tables. If you only see `d1_migrations`, step 2 didn't run
-against `--remote`.
+You should see 20+. If the count is 0 or 1, step 2 didn't run against `--remote`.
 
 ---
 
@@ -101,14 +129,28 @@ the correct behaviour, not a bug.
 
 ---
 
-## 4. Build the frontend and deploy
+## 4. Build the frontend, check, deploy
 
-The Worker serves `apps/web/dist`, so the build must happen **first**:
+The Worker serves `apps/web/dist`, so the build must happen **first**. From the repo
+root:
 
 ```bash
-cd ../web && npm run build      # produces apps/web/dist
-cd ../api && npx wrangler deploy
+npm run deploy:build     # vite build -> apps/web/dist
+npm run deploy:check     # preflight: blocks the known silent failures
+npm run deploy --workspace @ihsan/api
 ```
+
+`deploy:check` is not ceremony. It catches the four failures that *appear* to deploy
+successfully and then break in the browser:
+
+| Check | Why it matters |
+|---|---|
+| `database_id` still a placeholder | deploys a Worker bound to nothing; every query fails |
+| `SESSION_SECRET` written in the toml | leaks the key into git; must be a `wrangler secret` |
+| demo SQL inside `migrations/` | fake customers and stock become real rows |
+| `not_found_handling` not SPA | every hard refresh on `/reports`, `/opening` returns 404 |
+
+It exits non-zero, so it can gate a CI deploy later without changes.
 
 Success prints a URL:
 
@@ -137,24 +179,43 @@ curl -X POST https://ihsancenter-api.<your-subdomain>.workers.dev/api/auth/boots
 
 Then open the URL and sign in.
 
-Use a real password here — this is not the `ihsan12345` demo credential. There is no
-password reset by email; recovery is a direct database update (see §9).
+### Smoke test the deployment
+
+```bash
+node scripts/smoke.mjs https://ihsancenter-api.<your-subdomain>.workers.dev \
+  --user ihsan --password 'your-real-password'
+```
+
+It checks, in order: the API answers; the app is served; **hard refresh** works on
+`/reports`, `/opening` and `/invoices`; the API is guarded; the database responds; a
+real login succeeds; the session cookie survives a round trip; the main screens load;
+and the books balance. Each failure prints the specific cause, so a 500 on login
+tells you it is `SESSION_SECRET` rather than making you guess.
+
+Use a real password for the bootstrap call — this is not the `ihsan12345` demo
+credential. There is no password reset by email; recovery is a direct database update
+(see §9).
+
+Without `--user`/`--password` the smoke test does only the read-only half, which is
+safe to run against the live shop at any time.
 
 ---
 
-## 6. Smoke test, in this order
+## 6. The checks that only a person can do
 
-Each of these catches a different class of problem:
+The smoke test covers what HTTP can see. These need eyes, and each catches a
+different class of problem:
 
 | Check | Expected | If it fails |
 |---|---|---|
 | Open the URL | login screen | Worker/assets mismatch — rebuild and redeploy (§4) |
 | Sign in | dashboard loads | `SESSION_SECRET` missing (§3) |
 | Refresh the page on `/receivables` | still the app | SPA fallback broken — check `[assets]` in `wrangler.toml` |
-| Create a product | appears in Stock | D1 binding wrong — check `database_id` (§1) |
+| Add a product | appears in Stock | D1 binding wrong — check `database_id` (§1) |
 | Ring a sale with cash | invoice prints | — |
 | Ring a sale on credit over a limit | blocked with a reason | correct behaviour |
-| Reports → Books check | "All documents balance" | something is genuinely wrong; do not enter real data |
+| Open **Opening** | pre-filled, locked rows, live capital | — |
+| Reports → Books check | "All documents balance" | something is genuinely wrong; do not enter real money |
 
 That last one is the important gate: **the integrity check must pass before the shop
 starts using it for real money.**
@@ -189,8 +250,7 @@ request cap, the CPU cap, and lifts D1 to 10 GB. No rewrite.
 ## 8. Updating the app later
 
 ```bash
-cd apps/web && npm run build
-cd ../api && npx wrangler deploy
+npm run deploy:build && npm run deploy:check && npm run deploy --workspace @ihsan/api
 ```
 
 That's it — no downtime, no restart. Existing invoices are untouched; only code
@@ -206,18 +266,26 @@ Rollback: `npx wrangler rollback` returns to the previous deployment instantly.
 No reset email exists. Reset the hash directly:
 
 ```bash
-# 1. Generate a hash with the same PBKDF2 the app uses
-cd apps/api && npm run hash-password "the-new-password"
-#    prints: <salt>:<hash> and the iteration count
+# Prints the hash AND a ready-to-run UPDATE statement.
+node scripts/hash-password.mjs 'the-new-password' --user ihsan
 
-# 2. Write it, and bump token_version to kill existing sessions
+# Then run the statement it prints, or:
 npx wrangler d1 execute ihsancenter --remote --command \
-  "UPDATE users SET password_hash='<salt>:<hash>', iterations=25000,
+  "UPDATE users SET password_hash='<printed>', iterations=25000,
    token_version=token_version+1 WHERE username='ihsan'"
 ```
 
-(This helper script is a TODO — until it exists, the alternative is to delete the
-user row and re-run the bootstrap endpoint, which also works and is simpler.)
+`token_version + 1` signs out every existing session — what you want if the old
+password may have leaked. **Check the row count in the output:** if it says 0 rows
+changed, no user by that name exists.
+
+The generator uses Node's WebCrypto with the same PBKDF2 parameters as
+`src/lib/crypto.ts`, and verifies its own output before printing it, so it cannot
+emit a hash the API would reject. Verified end to end: reset a password with it,
+the old one returned 401 and the new one 200.
+
+If the user row is gone entirely, `POST /api/auth/bootstrap` recreates the first
+account — but only while no user exists at all.
 
 ---
 

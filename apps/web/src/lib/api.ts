@@ -157,11 +157,25 @@ export interface Invoice {
   created_at: string;
 }
 
+export interface InvoicePaymentEntry {
+  date: string;
+  document: string;
+  kind: 'receipt' | 'credit note';
+  mode: string;
+  amountPaisa: number;
+  balanceAfterPaisa: number;
+}
+
 /** What has been received against an invoice since it was issued. */
 export interface InvoicePayment {
   settledPaisa: number;
   outstandingPaisa: number;
   overpaidPaisa: number;
+  /** Date the bill reached zero. Null while anything is still owed. */
+  clearedOn: string | null;
+  lastPaidOn: string | null;
+  /** Every payment, oldest first, with the balance it left behind. */
+  history: InvoicePaymentEntry[];
   receipts: { receipt_no: string; doc_date: string; mode: string; amount_paisa: number }[];
 }
 

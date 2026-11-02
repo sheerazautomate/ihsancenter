@@ -114,20 +114,50 @@ export default function Receipt({
             <tr>
               <td colSpan={2} style={{ textAlign: 'center', fontWeight: 600 }}>
                 PAID IN FULL
+                {payment.clearedOn ? ` — ${payment.clearedOn}` : ''}
               </td>
             </tr>
           )}
         </tbody>
       </table>
 
-      {payment && payment.receipts.length > 0 && (
-        <div style={{ fontSize: 11, marginTop: 8 }}>
-          <strong>Payments received</strong>
-          {payment.receipts.map((r) => (
-            <div key={r.receipt_no} className="muted">
-              {r.doc_date} · {r.receipt_no} · {r.mode} · {formatPkr(r.amount_paisa)}
-            </div>
-          ))}
+      {/* The dated payment history. This is what settles an argument: each date,
+          what was handed over, and the balance it left. A single "received since"
+          total cannot answer "on which date did I pay what". */}
+      {payment && payment.history.length > 0 && (
+        <div style={{ marginTop: 10 }}>
+          <div style={{ fontSize: 11, fontWeight: 600, marginBottom: 3 }}>
+            Payments against this bill
+          </div>
+          <table style={{ fontSize: 11 }}>
+            <thead>
+              <tr>
+                <th style={{ textAlign: 'left' }}>Date</th>
+                <th style={{ textAlign: 'left' }}>Receipt</th>
+                <th style={{ textAlign: 'left' }}>Mode</th>
+                <th style={{ textAlign: 'right' }}>Paid</th>
+                <th style={{ textAlign: 'right' }}>Balance</th>
+              </tr>
+            </thead>
+            <tbody>
+              {payment.history.map((h) => (
+                <tr key={`${h.document}-${h.date}`}>
+                  <td>{h.date}</td>
+                  <td>{h.document}</td>
+                  <td style={{ textTransform: 'capitalize' }}>{h.kind === 'credit note' ? 'return' : h.mode}</td>
+                  <td style={{ textAlign: 'right' }}>{formatPkr(h.amountPaisa)}</td>
+                  <td style={{ textAlign: 'right' }}>{formatPkr(h.balanceAfterPaisa)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <div style={{ fontSize: 10, marginTop: 3 }} className="muted">
+            {payment.outstandingPaisa === 0
+              ? `Cleared in full${payment.clearedOn ? ` on ${payment.clearedOn}` : ''}.`
+              : `Still owed ${formatPkr(payment.outstandingPaisa)}${
+                  payment.lastPaidOn ? ` after the last payment on ${payment.lastPaidOn}` : ''
+                }.`}
+          </div>
         </div>
       )}
 

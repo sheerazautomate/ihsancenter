@@ -277,9 +277,19 @@ export default function ReceivablesPage() {
                           {invoiceId === i.id && (
                             <span className="badge" style={{ marginLeft: 6 }}>selected</span>
                           )}
-                          <div className="muted" style={{ fontSize: 12 }}>{i.doc_date}</div>
+                          <div className="muted" style={{ fontSize: 12 }}>
+                            {i.doc_date}
+                            {i.credit_paisa > i.bal && (
+                              <> · {formatPkr(i.credit_paisa - i.bal)} of {formatPkr(i.credit_paisa)} paid</>
+                            )}
+                          </div>
                         </td>
-                        <td className="num mono">{formatPkr(i.bal)}</td>
+                        <td className="num mono">
+                          {formatPkr(i.bal)}
+                          {i.credit_paisa > i.bal && (
+                            <div className="muted" style={{ fontSize: 11 }}>part paid</div>
+                          )}
+                        </td>
                       </tr>
                     ))}
                   </tbody>

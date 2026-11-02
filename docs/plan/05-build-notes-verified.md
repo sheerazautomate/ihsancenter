@@ -663,3 +663,34 @@ export — failures are collected and named on the Cover sheet under INCOMPLETE.
 
 This is also the nearest thing to a backup that exists today. The free plan has none,
 and the workbook is the only artefact that can be handed to another system intact.
+
+## "On which date did he pay what"
+
+A running total cannot answer this. "Received since Rs 1,200" is true and useless
+when the farmer is holding three slips and wants to check each one against the bill
+in his hand. The shop asked for dates, and dates are the whole point.
+
+`GET /api/sales/:id` now returns a `history` array, oldest first:
+
+    { date, document, kind: receipt|credit note, mode, amountPaisa, balanceAfterPaisa }
+
+plus `clearedOn` (the date the bill reached zero, null while anything is still owed)
+and `lastPaidOn`. Receipts and return credit notes are merged into one timeline and
+sorted by date, because both reduce what the farmer owes and both have a date he
+will look for.
+
+**The printed invoice carries the table.** Date, receipt number, mode, paid, and the
+balance after each payment — the last of which is the number that actually settles an
+argument. Under it: "Cleared in full on 2026-04-02", or "Still owed Rs 1,500 after the
+last payment on 2026-05-11". The PAID IN FULL stamp now carries its date.
+
+**And the lists carry it too**, because a manager scanning bills should not have to
+open each one: the Invoices tab shows the cleared date under a paid badge and
+"last paid <date>" under a part-paid balance, and Udhaar's open-bill list shows how
+much of each bill has already been paid.
+
+The balance in the history is recomputed from the invoice's own credit figure, never
+below zero, so a run of payments reads monotonically down to zero. `clearedOn` is set
+only when the running balance actually reaches it; a part-paid bill reports null, and
+that distinction is tested — showing a cleared date on an open bill would tell the
+farmer he is done when he is not.
